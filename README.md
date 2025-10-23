@@ -17,6 +17,8 @@ I aim to add further syntax. One I am looking at implementing is an each system,
 
 ## Files and how it works
 
+Chuck everything in a routes directory. This is what will be built
+
 /routes/{name}.md ==> /build/name/index.html (using the template.html to put it in)
 /routes/about/index.md ==> /build/about/index.html (using compilation)
 /routes/about/index.html is just copied across
