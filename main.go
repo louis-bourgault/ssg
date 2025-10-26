@@ -37,6 +37,9 @@ func main() {
 	rootPath = "routes"
 	traverseDirectory(rootPath)
 
+}
+
+func initDevServer() {
 	//for testing purposes, for prod you would probably copy things to nginx or a dedicated file server
 	dir := http.Dir("./build")
 	fileServer := http.FileServer(dir)
