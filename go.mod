@@ -1,4 +1,4 @@
-module ssg
+module github.com/louis-bourgault/ssg
 
 go 1.25.3
 
@@ -8,4 +8,8 @@ require (
 	github.com/yuin/goldmark-meta v1.1.0
 )
 
-require gopkg.in/yaml.v2 v2.3.0 // indirect
+require (
+	github.com/fsnotify/fsnotify v1.9.0 // indirect
+	golang.org/x/sys v0.13.0 // indirect
+	gopkg.in/yaml.v2 v2.3.0 // indirect
+)

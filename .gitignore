@@ -2,6 +2,9 @@ build/
 
 routes/**
 
+#this is my personal todo list for things i am currently working on
+todo.md
+
 # Binaries for programs and plugins
 *.exe
 *.exe~
