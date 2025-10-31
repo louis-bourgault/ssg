@@ -15,7 +15,7 @@ import (
 	"github.com/yuin/goldmark/renderer/html"
 )
 
-func GenerateSingleFile(content string, template string, metadata types.File) string {
+func GenerateSingleFile(content string, template string, path string) string {
 	md := goldmark.New(
 		goldmark.WithExtensions(
 			extension.GFM,
@@ -35,7 +35,7 @@ func GenerateSingleFile(content string, template string, metadata types.File) st
 	}
 	templateParts := strings.Split(template, "{{slot}}")
 
-	finalFile := fixLinksAndImages(strings.Join([]string{PopulateMeta(context, templateParts[0]), buf.String(), PopulateMeta(context, templateParts[1])}, ""), metadata.OriginalPath)
+	finalFile := fixLinksAndImages(strings.Join([]string{PopulateMeta(context, templateParts[0]), buf.String(), PopulateMeta(context, templateParts[1])}, ""), path)
 	return finalFile
 }
 
