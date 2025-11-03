@@ -44,9 +44,3 @@ Possible things to add are:
 - preload on hover (optional postprocessing system)
 - {each} tags as above
 - change some parsing from weird ```strings.Split``` hacky solutions to using regex properly
-
-
-# Initialising
-Use degit, by Rich Harris, or copy the template directory of this repository.
-[https://github.com/Rich-Harris/degit](https://github.com/Rich-Harris/degit)
-```degit louis-bourgault/ssg/template```

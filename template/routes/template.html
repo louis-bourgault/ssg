@@ -1,0 +1,73 @@
+<!doctype html>
+
+<head>
+    <title>{{meta.Title}}</title>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <link rel="stylesheet" href="./pico.classless.min.css" />
+    <script>
+        function setInitialTheme() {
+            const savedTheme = localStorage.getItem("theme");
+            const prefersDark = window.matchMedia(
+                "(prefers-color-scheme: dark)",
+            ).matches;
+            const htmlElement = document.documentElement;
+
+            if (savedTheme) {
+                htmlElement.setAttribute("data-theme", savedTheme);
+            } else if (prefersDark) {
+                htmlElement.setAttribute("data-theme", "dark");
+            } else {
+                htmlElement.setAttribute("data-theme", "light");
+            }
+        }
+
+        function toggleTheme() {
+            const htmlElement = document.documentElement;
+            const currentTheme = htmlElement.getAttribute("data-theme");
+            const newTheme = currentTheme === "dark" ? "light" : "dark";
+
+            htmlElement.setAttribute("data-theme", newTheme);
+            localStorage.setItem("theme", newTheme);
+        }
+
+        setInitialTheme();
+    </script>
+</head>
+
+<body>
+    <nav>
+        <ul>
+            <li>
+                <strong><a href="/">Template Site</a></strong>
+            </li>
+        </ul>
+        <ul>
+            <li><button onclick="toggleTheme()">Toggle Theme</button></li>
+        </ul>
+    </nav>
+    <main>
+        <h1>{{meta.Title}}</h1>
+
+        {{slot}}
+    </main>
+</body>
+
+<style>
+    main {
+        width: 80%;
+        margin: 0 auto;
+    }
+
+    @media only screen and (max-width: 600px) {
+        main {
+            width: 100%;
+        }
+    }
+
+    nav {
+        padding-left: 15px;
+        padding-right: 15px;
+    }
+</style>
