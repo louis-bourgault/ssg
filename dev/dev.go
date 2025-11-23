@@ -14,6 +14,7 @@ import (
 //this is a dev server implementation
 
 func RunDevServer() {
+
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Println("Serving URL path", r.URL.Path)
 
@@ -36,47 +37,21 @@ func RunDevServer() {
 		// 2. the {name}.md file in the parent directory (where name is the last segment of the path)
 
 		var file []byte
-		var path string
-		var err error
 
-		// First, try index.md in the current directory
-		toCheck := filepath.Join("routes", filepath.FromSlash(r.URL.Path), "index.md")
-		file, err = os.ReadFile(toCheck)
-		if err == nil {
-			path = toCheck
-		} else if os.IsNotExist(err) {
-			toCheck = filepath.Join("routes", filepath.FromSlash(r.URL.Path), "index.html")
-			file, err = os.ReadFile(toCheck)
-			if err == nil {
-				path = toCheck
-				w.Write(file) //just serve html file without processing
-				return
-			} else if os.IsNotExist(err) {
-				urlPath := strings.TrimSuffix(r.URL.Path, "/")
-				if urlPath != "" {
-					toCheck = filepath.Join("routes", filepath.FromSlash(urlPath)+".md")
-					file, err = os.ReadFile(toCheck)
-					if err == nil {
-						path = toCheck
-					} else if os.IsNotExist(err) {
-						toCheck = filepath.Join("routes", filepath.FromSlash(urlPath)+".html")
-						file, err = os.ReadFile(toCheck)
-						if err == nil {
-							path = toCheck
-						}
-						w.Write(file) //we don't process html files, we just serve them
-						return
-					}
-				}
-			}
-		}
-
-		if path == "" || err != nil {
+		path, err := FindFile(r.URL.Path)
+		if err != nil {
 			w.WriteHeader(http.StatusNotFound)
-			fmt.Fprintf(w, "404 Not Found: The requested resource '%s' could not be found.", r.URL.Path)
+			fmt.Fprintf(w, "404 not found")
 			return
 		}
 
+		file, err = os.ReadFile(path)
+
+		if err != nil {
+			fmt.Println("error reading file:", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
 		log.Println("Found file at", path)
 
 		templatePath := FindTemplateRuntime(path)
@@ -95,28 +70,13 @@ func RunDevServer() {
 			return
 		}
 
-		w.Write([]byte(renderer.GenerateSingleFile(string(file), string(template), path)))
+		w.Write([]byte(injectWSScript(renderer.GenerateSingleFile(string(file), string(template), path), r.URL.Path)))
 	})
+
+	http.HandleFunc("/_devws/", DevWS)
 
 	fmt.Println("Server starting on port 8080...")
 	http.ListenAndServe(":8080", nil)
-}
-
-func FindTemplateRuntime(contentLocation string) (templateLocation string) {
-	log.Println("Looking for template for content at", contentLocation)
-	dir := filepath.Dir(contentLocation)
-	for {
-		templatePath := filepath.Join(dir, "template.html")
-		if _, err := os.Stat(templatePath); err == nil {
-			return templatePath
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			break
-		}
-		dir = parent
-	}
-	return ""
 }
 
 func getContentType(path string) string {
@@ -143,4 +103,32 @@ func getContentType(path string) string {
 	default:
 		return "application/octet-stream"
 	}
+}
+
+func injectWSScript(original string, pageURL string) string {
+	script := fmt.Sprintf(`<script>
+		const wsUri = "ws://localhost:8080/_devws%s";
+		const websocket = new WebSocket(wsUri);
+		websocket.onopen = (event) => {
+			console.log("Hot reloading system started")
+		}
+		websocket.onmessage = (event) => {
+			if (event.data === "reload") {
+				window.location.reload();
+			}
+		}
+		websocket.onerror = (error) => {
+			console.error(error)
+		}
+	</script>`, pageURL)
+
+	if strings.Contains(original, "<head>") {
+		return strings.Replace(original, "<head>", "<head>"+script, 1)
+	}
+
+	if strings.Contains(original, "<!DOCTYPE html>") || strings.Contains(original, "<!doctype html>") {
+		return strings.Replace(original, ">", ">"+script, 1)
+	}
+
+	return "<head>" + script + "</head>" + original
 }
