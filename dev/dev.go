@@ -98,10 +98,52 @@ func getContentType(path string) string {
 		return "image/gif"
 	case ".svg":
 		return "image/svg+xml"
+	case ".pdf":
+		return "application/pdf"
+	case ".mp4":
+		return "video/mp4"
+	case ".mp3":
+		return "audio/mpeg"
+	case ".woff":
+		return "font/woff"
+	case ".woff2":
+		return "font/woff2"
+	case ".ttf":
+		return "font/ttf"
+	case ".otf":
+		return "font/otf"
+	case ".ico":
+		return "image/x-icon"
+	case ".doc", ".docx":
+		return "application/msword"
+	case ".ppt", ".pptx":
+		return "application/vnd.ms-powerpoint"
+	case ".xls", ".xlsx":
+		return "application/vnd.ms-excel"
+	case ".odt":
+		return "application/vnd.oasis.opendocument.text"
+	case ".odp":
+		return "application/vnd.oasis.opendocument.presentation"
+	case ".ods":
+		return "application/vnd.oasis.opendocument.spreadsheet"
+	case ".psd":
+		return "image/vnd.adobe.photoshop"
+	case ".ai":
+		return "application/postscript"
+	case ".afdesign":
+		return "application/x-affinity-designer"
+	case ".afphoto", ".af":
+		return "application/x-affinity-photo"
+	case ".afpub":
+		return "application/x-affinity-publisher"
+	case ".zip":
+		return "application/zip"
 	case ".webp":
 		return "image/webp"
+	case ".txt":
+		return "text/plain"
 	default:
-		return "application/octet-stream"
+		return "text/[unknown]"
 	}
 }
 
