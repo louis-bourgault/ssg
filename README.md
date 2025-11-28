@@ -13,7 +13,7 @@ At this point, I could have found another SSG that aligned with what I wanted. O
 
 
 I aim to add further syntax. One I am looking at implementing is an each system, that can be used to show different things within a directory. It would follow a syntax like:
-```{#each . as item sort date desc}```.
+```{#each . as item sort date desc}```. Also, to allow table of contents systems, I could also do ```meta.headings``` which would work with each blocks.
 
 ## Files and how it works
 
