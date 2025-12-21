@@ -9,6 +9,7 @@ import (
 
 	_ "github.com/google/uuid"
 	"github.com/louis-bourgault/ssg/dev"
+	"github.com/louis-bourgault/ssg/index"
 	"github.com/louis-bourgault/ssg/renderer"
 	"github.com/louis-bourgault/ssg/types"
 )
@@ -44,6 +45,9 @@ func main() {
 func BuildFromDirectory(rootPath string) {
 	var filesFound = []types.File{}
 	var templates = make(map[string]string)
+	var projectIndices = index.ProjectIndex{
+		Directories: map[string]*index.DirectoryIndex{},
+	}
 
 	err := filepath.WalkDir(rootPath, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -77,8 +81,21 @@ func BuildFromDirectory(rootPath string) {
 	}
 
 	for i := 0; i < len(filesFound); i++ {
+		if filesFound[i].Type == "md" { //only index markdown files
+
+			fileContent, err := readFile(filepath.FromSlash(filesFound[i].OriginalPath))
+			if err != nil {
+				panic(err)
+			}
+			projectIndices.AddFile(filesFound[i], fileContent)
+		}
+	}
+	projectIndices.Finalise()
+
+	for i := 0; i < len(filesFound); i++ {
 		var finished []byte
 		finalLocation := renderer.FindFinalPath(filesFound[i])
+
 		if filesFound[i].Type == "md" {
 			template, path := renderer.FindTemplate(filesFound[i].OriginalPath, templates)
 			content, _ := readFile(filepath.FromSlash(filesFound[i].OriginalPath))
@@ -89,7 +106,7 @@ func BuildFromDirectory(rootPath string) {
 			finished = []byte(file)
 		}
 		dirPath := filepath.FromSlash(filepath.Dir(finalLocation))
-		err := os.MkdirAll(dirPath, 0755)
+		err = os.MkdirAll(dirPath, 0755)
 		if err != nil {
 			fmt.Printf("Error creating directory: %v\n", err)
 			return
