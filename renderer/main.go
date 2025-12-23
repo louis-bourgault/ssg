@@ -36,7 +36,6 @@ func GenerateSingleFile(content string, template string, path string, index *ind
 	}
 	templateParts := strings.Split(template, "{{slot}}")
 	joined := strings.Join([]string{PopulateMeta(context, templateParts[0]), buf.String(), PopulateMeta(context, templateParts[1])}, "")
-	fmt.Printf("Generated HTML for file %s:\n%s\n", path, joined)
 	populateEach(joined, index)
 	finalFile := fixLinksAndImages(joined, path)
 
@@ -46,24 +45,14 @@ func GenerateSingleFile(content string, template string, path string, index *ind
 func PopulateMeta(ctx parser.Context, documentText string) string {
 	meta := meta.Get(ctx)
 
-	parts := strings.Split(documentText, "{{meta.")
-	if len(parts) == 1 {
-		return documentText
-	} else {
-		text := parts[0]
-		for i := 1; i < len(parts); i++ { //we ignore the first one since
-			split := strings.Split(parts[i], "}}")
-			key := split[0]
-			value := meta[key]
-			asString := fmt.Sprintf("%v", value)
-			if len(split) == 2 { //there is more stuff afterwards
-				text = strings.Join([]string{text, asString, split[1]}, "")
-			} else {
-				text = strings.Join([]string{text, asString}, "")
-			}
-		}
-		return text
-	}
+	metaPattern := regexp.MustCompile(`{{meta\.([^}]+)}}`)
+	result := metaPattern.ReplaceAllStringFunc(documentText, func(match string) string {
+		key := metaPattern.FindStringSubmatch(match)[1]
+		value := meta[key]
+		return fmt.Sprintf("%v", value)
+	})
+
+	return result
 }
 
 func populateEach(documentText string, index *index.ProjectIndex) string {
