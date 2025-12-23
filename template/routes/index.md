@@ -1,4 +1,6 @@
-# SSG
+---
+Title: "SSG Overview"
+---
 
 A simple SSG for markdown files.
 

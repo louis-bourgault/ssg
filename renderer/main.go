@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/louis-bourgault/ssg/index"
 	"github.com/louis-bourgault/ssg/types"
 	"github.com/yuin/goldmark"
 	meta "github.com/yuin/goldmark-meta"
@@ -15,7 +16,7 @@ import (
 	"github.com/yuin/goldmark/renderer/html"
 )
 
-func GenerateSingleFile(content string, template string, path string) string {
+func GenerateSingleFile(content string, template string, path string, index *index.ProjectIndex) string {
 	md := goldmark.New(
 		goldmark.WithExtensions(
 			extension.GFM,
@@ -34,8 +35,11 @@ func GenerateSingleFile(content string, template string, path string) string {
 		panic(err)
 	}
 	templateParts := strings.Split(template, "{{slot}}")
+	joined := strings.Join([]string{PopulateMeta(context, templateParts[0]), buf.String(), PopulateMeta(context, templateParts[1])}, "")
+	fmt.Printf("Generated HTML for file %s:\n%s\n", path, joined)
+	populateEach(joined, index)
+	finalFile := fixLinksAndImages(joined, path)
 
-	finalFile := fixLinksAndImages(strings.Join([]string{PopulateMeta(context, templateParts[0]), buf.String(), PopulateMeta(context, templateParts[1])}, ""), path)
 	return finalFile
 }
 
@@ -62,6 +66,17 @@ func PopulateMeta(ctx parser.Context, documentText string) string {
 	}
 }
 
+func populateEach(documentText string, index *index.ProjectIndex) string {
+	fmt.Println("populating each in the document")
+	//detect any area that starts with {{#each [...]}} and ends with {{/each}}
+	eachPattern := regexp.MustCompile(`(?s){{#each\s+([^}]+)}}(.*?){{/each}}`)
+	content := eachPattern.ReplaceAllStringFunc(documentText, func(match string) string {
+		fmt.Println("processing each block:", match)
+		return "here we would process the each block"
+	})
+
+	return content
+}
 func fixLinksAndImages(htmlContent string, currentFilePath string) string {
 	hrefPattern := regexp.MustCompile(`href="([^"]*)"`)
 	srcPattern := regexp.MustCompile(`src="([^"]*)"`)

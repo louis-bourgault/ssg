@@ -36,6 +36,15 @@ func (p *ProjectIndex) Finalise() {
 			log.Println("Error writing index file for directory", dirPath, ":", err)
 		}
 	}
+	jsonData, err := json.Marshal(p)
+	if err != nil {
+		log.Println("Error marshalling project index:", err)
+		return
+	}
+	err = os.WriteFile(".projectindex.json", jsonData, 0644)
+	if err != nil {
+		log.Println("Error writing project index file:", err)
+	}
 }
 
 func (p *ProjectIndex) AddFile(file types.File, content string) {
