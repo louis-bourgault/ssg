@@ -29,6 +29,7 @@ func GenerateSingleFile(content string, template string, path string, index *ind
 			html.WithXHTML(),
 		),
 	)
+	fmt.Println("Generating single file for path:", path)
 	var buf bytes.Buffer
 	context := parser.NewContext()
 	if err := md.Convert([]byte(content), &buf, parser.WithContext(context)); err != nil {
@@ -36,8 +37,8 @@ func GenerateSingleFile(content string, template string, path string, index *ind
 	}
 	templateParts := strings.Split(template, "{{slot}}")
 	joined := strings.Join([]string{PopulateMeta(context, templateParts[0]), buf.String(), PopulateMeta(context, templateParts[1])}, "")
-	populateEach(joined, index)
-	finalFile := fixLinksAndImages(joined, path)
+	eachPop := populateEach(joined, index, path)
+	finalFile := fixLinksAndImages(eachPop, path)
 
 	return finalFile
 }
@@ -55,13 +56,51 @@ func PopulateMeta(ctx parser.Context, documentText string) string {
 	return result
 }
 
-func populateEach(documentText string, index *index.ProjectIndex) string {
+func populateEach(documentText string, index *index.ProjectIndex, path string) string {
 	fmt.Println("populating each in the document")
 	//detect any area that starts with {{#each [...]}} and ends with {{/each}}
 	eachPattern := regexp.MustCompile(`(?s){{#each\s+([^}]+)}}(.*?){{/each}}`)
 	content := eachPattern.ReplaceAllStringFunc(documentText, func(match string) string {
 		fmt.Println("processing each block:", match)
-		return "here we would process the each block"
+		eachInner := eachPattern.FindStringSubmatch(match)
+		fieldName := eachInner[1]
+		blockContent := eachInner[2]
+		fmt.Println("field name:", fieldName)
+		fmt.Println("block content:", blockContent)
+
+		whereFrom := strings.Split(fieldName, " ")[0]
+		fmt.Println("where from:", whereFrom)
+
+		folderToLook := filepath.Join(filepath.Dir(path), whereFrom)
+		fmt.Println("folder to look:", folderToLook)
+
+		directoryIndex, exists := index.Directories[folderToLook]
+		if !exists {
+			fmt.Println("no directory index found for", folderToLook)
+			return ""
+		}
+		fmt.Println("found directory index for", folderToLook)
+
+		compiledHTML := ""
+
+		// Regex to find all {{item.PropertyName}} patterns in the block content
+		itemPattern := regexp.MustCompile(`{{item\.([^}]+)}}`)
+
+		for _, fileIndex := range directoryIndex.Files {
+			itemContent := itemPattern.ReplaceAllStringFunc(blockContent, func(itemMatch string) string {
+				fmt.Println("item match", itemMatch)
+				propertyName := itemPattern.FindStringSubmatch(itemMatch)[1]
+				fmt.Println("property name:", propertyName)
+				value, exists := fileIndex.Properties[propertyName]
+				if !exists {
+					return ""
+				}
+				return fmt.Sprintf("%v", value)
+			})
+			compiledHTML += itemContent
+		}
+
+		return compiledHTML
 	})
 
 	return content
