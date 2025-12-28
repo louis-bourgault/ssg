@@ -3,8 +3,10 @@ package renderer
 import (
 	"bytes"
 	"fmt"
+	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/louis-bourgault/ssg/index"
@@ -90,6 +92,38 @@ func populateEach(documentText string, index *index.ProjectIndex, path string) s
 			itemContent := itemPattern.ReplaceAllStringFunc(blockContent, func(itemMatch string) string {
 				//fmt.Println("item match", itemMatch)
 				propertyName := itemPattern.FindStringSubmatch(itemMatch)[1]
+				if strings.HasPrefix(propertyName, "_preview") {
+					previewLengthStr := strings.TrimPrefix(propertyName, "_preview")
+					previewLength, err := strconv.Atoi(previewLengthStr)
+					if err != nil {
+						fmt.Println("Error parsing preview length:", err)
+						return ""
+					}
+					//there could be a better way than converting to html and then removing, but this does the job for now
+					originalFilePath := fileIndex.File.OriginalPath
+					fileContentBytes, err := os.ReadFile(originalFilePath)
+					if err != nil {
+						fmt.Println("Error reading file for preview:", err)
+						return ""
+					}
+					fileContent := stripYamlProperties(string(fileContentBytes))
+					md := goldmark.New()
+					var buf bytes.Buffer
+					if err := md.Convert([]byte(fileContent), &buf); err != nil {
+						fmt.Println("Error converting markdown:", err)
+						return ""
+					}
+
+					//get rid of html tags
+					htmlTagPattern := regexp.MustCompile(`<[^>]*>`)
+					plaintext := htmlTagPattern.ReplaceAllString(buf.String(), "")
+					plaintext = strings.TrimSpace(regexp.MustCompile(`\s+`).ReplaceAllString(plaintext, " "))
+
+					if len(plaintext) > previewLength {
+						return plaintext[:previewLength] + "..."
+					}
+					return plaintext
+				}
 				//fmt.Println("property name:", propertyName)
 				value, exists := fileIndex.Properties[propertyName]
 				if !exists {
@@ -104,6 +138,27 @@ func populateEach(documentText string, index *index.ProjectIndex, path string) s
 	})
 
 	return content
+}
+
+func stripYamlProperties(content string) string {
+	if !strings.HasPrefix(content, "---") {
+		return content
+	}
+
+	lines := strings.Split(content, "\n")
+	endIndex := -1
+	for i := 1; i < len(lines); i++ {
+		if strings.TrimSpace(lines[i]) == "---" {
+			endIndex = i
+			break
+		}
+	}
+
+	if endIndex == -1 {
+		return content
+	}
+
+	return strings.Join(lines[endIndex+1:], "\n")
 }
 func fixLinksAndImages(htmlContent string, currentFilePath string) string {
 	hrefPattern := regexp.MustCompile(`href="([^"]*)"`)
