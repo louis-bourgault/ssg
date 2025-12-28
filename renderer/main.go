@@ -57,29 +57,29 @@ func PopulateMeta(ctx parser.Context, documentText string) string {
 }
 
 func populateEach(documentText string, index *index.ProjectIndex, path string) string {
-	fmt.Println("populating each in the document")
+	//fmt.Println("populating each in the document")
 	//detect any area that starts with {{#each [...]}} and ends with {{/each}}
 	eachPattern := regexp.MustCompile(`(?s){{#each\s+([^}]+)}}(.*?){{/each}}`)
 	content := eachPattern.ReplaceAllStringFunc(documentText, func(match string) string {
-		fmt.Println("processing each block:", match)
+		//fmt.Println("processing each block:", match)
 		eachInner := eachPattern.FindStringSubmatch(match)
 		fieldName := eachInner[1]
 		blockContent := eachInner[2]
-		fmt.Println("field name:", fieldName)
-		fmt.Println("block content:", blockContent)
+		//fmt.Println("field name:", fieldName)
+		//fmt.Println("block content:", blockContent)
 
 		whereFrom := strings.Split(fieldName, " ")[0]
-		fmt.Println("where from:", whereFrom)
+		//fmt.Println("where from:", whereFrom)
 
 		folderToLook := filepath.Join(filepath.Dir(path), whereFrom)
-		fmt.Println("folder to look:", folderToLook)
+		//fmt.Println("folder to look:", folderToLook)
 
 		directoryIndex, exists := index.Directories[folderToLook]
 		if !exists {
 			fmt.Println("no directory index found for", folderToLook)
 			return ""
 		}
-		fmt.Println("found directory index for", folderToLook)
+		//fmt.Println("found directory index for", folderToLook)
 
 		compiledHTML := ""
 
@@ -88,9 +88,9 @@ func populateEach(documentText string, index *index.ProjectIndex, path string) s
 
 		for _, fileIndex := range directoryIndex.Files {
 			itemContent := itemPattern.ReplaceAllStringFunc(blockContent, func(itemMatch string) string {
-				fmt.Println("item match", itemMatch)
+				//fmt.Println("item match", itemMatch)
 				propertyName := itemPattern.FindStringSubmatch(itemMatch)[1]
-				fmt.Println("property name:", propertyName)
+				//fmt.Println("property name:", propertyName)
 				value, exists := fileIndex.Properties[propertyName]
 				if !exists {
 					return ""
@@ -143,7 +143,7 @@ func isRelativeFileLink(url string) bool {
 }
 
 func resolveRelativeLink(relativeUrl string, currentFilePath string) string { //TODO: write this myself
-	fmt.Println("resolving the link", relativeUrl, "coming from", currentFilePath)
+	//fmt.Println("resolving the link", relativeUrl, "coming from", currentFilePath)
 
 	//directory of current file
 	currentDir := filepath.Dir(currentFilePath)
@@ -204,7 +204,7 @@ func FindTemplate(path string, templates map[string]string) (template string, te
 	// find the closest template to the file path by working upwards
 	for i := len(parts) - 1; i > 0; i-- {
 		pathToCheck := strings.Join(parts[0:i], "/") + "/"
-		fmt.Println("checking path", pathToCheck)
+		//fmt.Println("checking path", pathToCheck)
 		template := templates[pathToCheck]
 		if template != "" {
 			return template, pathToCheck
