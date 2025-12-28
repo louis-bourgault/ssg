@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io/fs"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -35,6 +36,14 @@ func main() {
 		case "dev":
 			fmt.Println("Running Development Server")
 			dev.RunDevServer()
+		case "serve":
+			//run simple static file server for testing a built site
+			BuildFromDirectory(rootPath)
+			fmt.Println("Build Completed")
+			fmt.Println("Running Static File Server on port 8080")
+			fs := http.FileServer(http.Dir("./build"))
+			http.Handle("/", fs)
+			http.ListenAndServe(":8080", nil)
 		default:
 			fmt.Println("Unknown command. Either run without a command for build, or use the command 'dev' for the development server")
 		}
@@ -100,7 +109,7 @@ func BuildFromDirectory(rootPath string) {
 			template, path := renderer.FindTemplate(filesFound[i].OriginalPath, templates)
 			content, _ := readFile(filepath.FromSlash(filesFound[i].OriginalPath))
 			fmt.Println("Generating with the template ", path, "and the file", filesFound[i].OriginalPath)
-			finished = []byte(renderer.GenerateSingleFile(content, template, filesFound[i].OriginalPath))
+			finished = []byte(renderer.GenerateSingleFile(content, template, filesFound[i].OriginalPath, &projectIndices))
 		} else {
 			file, _ := readFile(filepath.FromSlash(filesFound[i].OriginalPath))
 			finished = []byte(file)

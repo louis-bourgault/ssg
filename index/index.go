@@ -22,13 +22,13 @@ type ProjectIndex struct {
 func (p *ProjectIndex) Finalise() {
 	//write everything to disk
 	for dirPath, dirIndex := range p.Directories {
-		log.Println("Finalising directory of ", dirPath, "with", len(dirIndex.Files), "files")
+		//log.Println("Finalising directory of ", dirPath, "with", len(dirIndex.Files), "files")
 		jsonData, err := json.Marshal(dirIndex)
 		if err != nil {
 			log.Println("Error marshalling index for directory", dirPath, ":", err)
 			continue
 		}
-		fmt.Println(string(jsonData))
+		//fmt.Println(string(jsonData))
 		//write to a file called .index.json in the directory that it's indexing
 		indexFilePath := filepath.Join(dirPath, ".index.json")
 		err = os.WriteFile(indexFilePath, jsonData, 0644)
@@ -36,10 +36,19 @@ func (p *ProjectIndex) Finalise() {
 			log.Println("Error writing index file for directory", dirPath, ":", err)
 		}
 	}
+	jsonData, err := json.Marshal(p)
+	if err != nil {
+		log.Println("Error marshalling project index:", err)
+		return
+	}
+	err = os.WriteFile(".projectindex.json", jsonData, 0644)
+	if err != nil {
+		log.Println("Error writing project index file:", err)
+	}
 }
 
 func (p *ProjectIndex) AddFile(file types.File, content string) {
-	log.Println("Recieved file, ", file.OriginalPath)
+	//log.Println("Recieved file, ", file.OriginalPath)
 	directory := filepath.Dir(file.OriginalPath)
 	dirIndex, exists := p.Directories[directory]
 	if !exists {
@@ -69,7 +78,7 @@ func NewDirectoryIndex(path string) *DirectoryIndex {
 }
 
 func (d *DirectoryIndex) AddFile(file types.File, content string) {
-	log.Println("Recieved file, ", file.OriginalPath)
+	//log.Println("Recieved file, ", file.OriginalPath)
 	markdown := goldmark.New(
 		goldmark.WithExtensions(
 			meta.Meta,
@@ -115,7 +124,7 @@ func (d *DirectoryIndex) AddFile(file types.File, content string) {
 
 		for prop := range d.Properties {
 			if _, has := metaData[prop]; !has {
-				log.Println("File", file.OriginalPath, "is missing property", prop)
+				//log.Println("File", file.OriginalPath, "is missing property", prop)
 				delete(d.Properties, prop)
 			}
 		}

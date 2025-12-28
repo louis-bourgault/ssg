@@ -1,6 +1,7 @@
 package dev
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -8,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/louis-bourgault/ssg/index"
 	"github.com/louis-bourgault/ssg/renderer"
 )
 
@@ -55,22 +57,31 @@ func RunDevServer() {
 		log.Println("Found file at", path)
 
 		templatePath := FindTemplateRuntime(path)
-		if templatePath == "" {
-			log.Println("No template found, using default")
-			//without a template, things don't work, so just chuck something simple in there
-			w.Write([]byte(renderer.GenerateSingleFile(string(file), "<!doctype html><body>{{slot}}</body>", path)))
-			return
-		}
-
 		template, err := os.ReadFile(templatePath)
-		if err != nil {
-			log.Printf("Error reading template at %s: %v\n", templatePath, err)
-			w.WriteHeader(http.StatusInternalServerError)
-			fmt.Fprintf(w, "500 Internal Server Error: Could not read template")
-			return
+		if templatePath == "" || err != nil {
+			template = []byte("<!doctype html><body>{{slot}}</body>")
 		}
 
-		w.Write([]byte(injectWSScript(renderer.GenerateSingleFile(string(file), string(template), path), r.URL.Path)))
+		//if there is a project index (generated from a previous build), use that to populate links. Otherwise, just pass nil for the index
+
+		projData, err := os.ReadFile(".projectindex.json")
+		if err != nil {
+
+			w.Write([]byte(renderer.GenerateSingleFile(string(file), string(template), path, nil)))
+			var projectIndices index.ProjectIndex
+			err = json.Unmarshal(projData, &projectIndices)
+			if err != nil {
+				w.Write([]byte(renderer.GenerateSingleFile(string(file), string(template), path, nil)))
+			}
+			if err != nil {
+				log.Printf("Error reading template at %s: %v\n", templatePath, err)
+				w.WriteHeader(http.StatusInternalServerError)
+				fmt.Fprintf(w, "500 Internal Server Error: Could not read template")
+				return
+			}
+
+			w.Write([]byte(injectWSScript(renderer.GenerateSingleFile(string(file), string(template), path, &projectIndices), r.URL.Path)))
+		}
 	})
 
 	http.HandleFunc("/_devws/", DevWS)
