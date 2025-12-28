@@ -58,7 +58,7 @@ func PopulateMeta(ctx parser.Context, documentText string) string {
 	return result
 }
 
-func populateEach(documentText string, index *index.ProjectIndex, path string) string {
+func populateEach(documentText string, index *index.ProjectIndex, path string) string { //at the moment only works for directories, but i would like other types of collections such as headings in the document
 	//fmt.Println("populating each in the document")
 	//detect any area that starts with {{#each [...]}} and ends with {{/each}}
 	eachPattern := regexp.MustCompile(`(?s){{#each\s+([^}]+)}}(.*?){{/each}}`)
