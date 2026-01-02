@@ -39,7 +39,7 @@ Mainly simple wikis and static sites. I want a site for a project -- I can just 
 ## Possible Later Things:
 
 Possible things to add are:
-- image optimising and lazy loading
+- image optimising and lazy loading (will be really easy, just need to modify img tags)
 - dev server
 - preload on hover (optional postprocessing system)
 - {each} tags as above

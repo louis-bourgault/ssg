@@ -29,6 +29,7 @@ func GenerateSingleFile(content string, template string, path string, index *ind
 		goldmark.WithRendererOptions(
 			html.WithHardWraps(),
 			html.WithXHTML(),
+			html.WithUnsafe(),
 		),
 	)
 	fmt.Println("Generating single file for path:", path)
@@ -40,9 +41,24 @@ func GenerateSingleFile(content string, template string, path string, index *ind
 	templateParts := strings.Split(template, "{{slot}}")
 	joined := strings.Join([]string{PopulateMeta(context, templateParts[0]), buf.String(), PopulateMeta(context, templateParts[1])}, "")
 	eachPop := populateEach(joined, index, path)
-	finalFile := fixLinksAndImages(eachPop, path)
+	fl := fixLinksAndImages(eachPop, path)
+	finalFile := LazyLoadImages(fl)
 
 	return finalFile
+}
+
+// simple lazy loading -- in future, optimise it for different image sizes (we should use a deterministic model when optimising sizes earlier on so we know what sizes from simply checking the original)
+func LazyLoadImages(documentText string) string {
+	imgPattern := regexp.MustCompile(`<img\s+([^>]*)>`)
+	result := imgPattern.ReplaceAllStringFunc(documentText, func(match string) string {
+		//if the thing already exists, don't change anything
+		if strings.Contains(match, "loading=") {
+			return match
+		}
+		//if not, add it at the end of the html tag
+		return strings.TrimSuffix(match, ">") + ` loading="lazy">`
+	})
+	return result
 }
 
 func PopulateMeta(ctx parser.Context, documentText string) string {
