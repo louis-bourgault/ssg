@@ -20,6 +20,8 @@ builds:
       - CGO_ENABLED=1
     goos:
       - linux
+    goarch:
+      - amd64
 
 archives:
   - formats: [tar.gz]
