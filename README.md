@@ -45,6 +45,9 @@ Possible things to add are:
 - {each} tags as above
 - change some parsing from weird ```strings.Split``` hacky solutions to using regex properly
 
+## Environment
+For webp, we use a library that does conversions through C bindings. Thus, you should use a machine with cgo working to compile and run this. If you're on windows, you could go through the hassle of installing MYS32, but do yourself a favour and just use WSL instead (or delete windows entirely, preferably)
+You will need libwebp installed: ```sudo apt-get install libwebp-dev```
 
 # Initialising
 Use degit, by Rich Harris, or copy the template directory of this repository.

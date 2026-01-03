@@ -5,3 +5,8 @@ type File struct {
 	Type         string
 	FinalPath    string
 }
+
+type ImageSize struct {
+	W int
+	H int
+}

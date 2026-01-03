@@ -10,6 +10,7 @@ import (
 
 	_ "github.com/google/uuid"
 	"github.com/louis-bourgault/ssg/dev"
+	"github.com/louis-bourgault/ssg/image"
 	"github.com/louis-bourgault/ssg/index"
 	"github.com/louis-bourgault/ssg/renderer"
 	"github.com/louis-bourgault/ssg/types"
@@ -100,6 +101,7 @@ func BuildFromDirectory(rootPath string) {
 		}
 	}
 	projectIndices.Finalise()
+	imageExtensions := []string{"jpg", "jpeg", "png", "tiff", "gif", "bmp", "webp"}
 
 	for i := 0; i < len(filesFound); i++ {
 		var finished []byte
@@ -110,9 +112,20 @@ func BuildFromDirectory(rootPath string) {
 			content, _ := readFile(filepath.FromSlash(filesFound[i].OriginalPath))
 			fmt.Println("Generating with the template ", path, "and the file", filesFound[i].OriginalPath)
 			finished = []byte(renderer.GenerateSingleFile(content, template, filesFound[i].OriginalPath, &projectIndices))
-		} else {
+		} else { //this would be the place to put webp logic
 			file, _ := readFile(filepath.FromSlash(filesFound[i].OriginalPath))
 			finished = []byte(file)
+			isImage := false
+			for _, ext := range imageExtensions {
+				if filesFound[i].Type == ext {
+					isImage = true
+					break
+				}
+			}
+			if isImage {
+				go image.GenerateImages(filesFound[i].OriginalPath, finalLocation)
+			}
+
 		}
 		dirPath := filepath.FromSlash(filepath.Dir(finalLocation))
 		err = os.MkdirAll(dirPath, 0755)

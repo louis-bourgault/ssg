@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/louis-bourgault/ssg/image"
 	"github.com/louis-bourgault/ssg/index"
 	"github.com/louis-bourgault/ssg/types"
 	"github.com/yuin/goldmark"
@@ -42,21 +43,23 @@ func GenerateSingleFile(content string, template string, path string, index *ind
 	joined := strings.Join([]string{PopulateMeta(context, templateParts[0]), buf.String(), PopulateMeta(context, templateParts[1])}, "")
 	eachPop := populateEach(joined, index, path)
 	fl := fixLinksAndImages(eachPop, path)
-	finalFile := LazyLoadImages(fl)
+	finalFile := OptimiseImages(fl)
 
 	return finalFile
 }
 
 // simple lazy loading -- in future, optimise it for different image sizes (we should use a deterministic model when optimising sizes earlier on so we know what sizes from simply checking the original)
-func LazyLoadImages(documentText string) string {
+func OptimiseImages(documentText string) string {
+	isFirst := true
 	imgPattern := regexp.MustCompile(`<img\s+([^>]*)>`)
 	result := imgPattern.ReplaceAllStringFunc(documentText, func(match string) string {
-		//if the thing already exists, don't change anything
-		if strings.Contains(match, "loading=") {
-			return match
+		if isFirst {
+
+			isFirst = false
+			return image.AdaptImgTag(match, true)
 		}
-		//if not, add it at the end of the html tag
-		return strings.TrimSuffix(match, ">") + ` loading="lazy">`
+		return image.AdaptImgTag(match, false)
+
 	})
 	return result
 }
