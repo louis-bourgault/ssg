@@ -62,26 +62,16 @@ func RunDevServer() {
 			template = []byte("<!doctype html><body>{{slot}}</body>")
 		}
 
-		//if there is a project index (generated from a previous build), use that to populate links. Otherwise, just pass nil for the index
-
 		projData, err := os.ReadFile(".projectindex.json")
-		if err != nil {
-
-			w.Write([]byte(renderer.GenerateSingleFile(string(file), string(template), path, nil)))
-			var projectIndices index.ProjectIndex
-			err = json.Unmarshal(projData, &projectIndices)
-			if err != nil {
-				w.Write([]byte(renderer.GenerateSingleFile(string(file), string(template), path, nil)))
+		var projectIndices *index.ProjectIndex
+		if err == nil {
+			var pi index.ProjectIndex
+			if err := json.Unmarshal(projData, &pi); err == nil {
+				projectIndices = &pi
 			}
-			if err != nil {
-				log.Printf("Error reading template at %s: %v\n", templatePath, err)
-				w.WriteHeader(http.StatusInternalServerError)
-				fmt.Fprintf(w, "500 Internal Server Error: Could not read template")
-				return
-			}
-
-			w.Write([]byte(injectWSScript(renderer.GenerateSingleFile(string(file), string(template), path, &projectIndices), r.URL.Path)))
 		}
+
+		w.Write([]byte(injectWSScript(renderer.GenerateSingleFile(string(file), string(template), path, projectIndices), r.URL.Path)))
 	})
 
 	http.HandleFunc("/_devws/", DevWS)

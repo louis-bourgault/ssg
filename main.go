@@ -123,7 +123,7 @@ func BuildFromDirectory(rootPath string) {
 				}
 			}
 			if isImage {
-				go image.GenerateImages(filesFound[i].OriginalPath, finalLocation)
+				image.GenerateImages(filesFound[i].OriginalPath, finalLocation)
 			}
 
 		}
