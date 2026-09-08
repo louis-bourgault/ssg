@@ -1,4 +1,9 @@
 *build/
+.ssg-dev/
+.ssg-dev-staging-*
+.ssg-dev-previous-*
+.build-staging-*
+.build-previous-*
 .ssg-build-*
 .ssg-previous-build-*
 .projectindex.json

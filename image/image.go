@@ -124,6 +124,11 @@ func GenerateImages(originalPath string, finalPath string) error {
 }
 
 func BuildSrcset(source string) (string, bool) {
+	return BuildSrcsetFrom(source, "routes")
+}
+
+// BuildSrcsetFrom builds a responsive srcset using assets below sourceDir.
+func BuildSrcsetFrom(source string, sourceDir string) (string, bool) {
 	//TODO: This function is really slow for what it does, which is a risk for things like the Cloudflare 20 minute site build. A single run for a large image often takes multiple seconds.
 	// It may be better to go through the directory and pattern match the name (since they're already generated) instead of deterministically figuring out what resolutions it would be from scratch
 
@@ -133,7 +138,7 @@ func BuildSrcset(source string) (string, bool) {
 	}
 
 	srcPath := path.Clean("/" + srcURL.Path)
-	diskPath := filepath.Join("routes", filepath.FromSlash(strings.TrimPrefix(srcPath, "/")))
+	diskPath := filepath.Join(sourceDir, filepath.FromSlash(strings.TrimPrefix(srcPath, "/")))
 
 	file, err := os.Open(diskPath)
 	if err != nil {
