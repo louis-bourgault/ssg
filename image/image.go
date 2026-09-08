@@ -3,7 +3,9 @@ package image
 import (
 	"fmt"
 	"image"
+	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -20,7 +22,26 @@ import (
 	"github.com/nfnt/resize"
 )
 
+var (
+	srcRegex    = regexp.MustCompile(`src="([^"]+)"`)
+	srcsetRegex = regexp.MustCompile(`\bsrcset="[^"]*"`)
+)
+
+func IsSupportedRasterPath(filePath string) bool {
+	extension := strings.ToLower(filepath.Ext(filePath))
+	switch extension {
+	case ".gif", ".jpeg", ".jpg", ".png", ".webp":
+		return true
+	default:
+		return false
+	}
+}
+
 func FindFinalDimensions(ow int, oh int) []types.ImageSize { //ow, oh mean original width and height. This function returns a list of the dimensions that this will be transformed into.
+	if ow <= 0 || oh <= 0 {
+		return nil
+	}
+
 	imageSizes := []types.ImageSize{}
 	aspect := float64(oh) / float64(ow)
 
@@ -54,71 +75,92 @@ func FindFinalDimensions(ow int, oh int) []types.ImageSize { //ow, oh mean origi
 	return imageSizes
 }
 
-func GenerateImages(originalPath string, finalPath string) {
+func GenerateImages(originalPath string, finalPath string) error {
+	if !IsSupportedRasterPath(originalPath) {
+		return fmt.Errorf("unsupported image type %q", filepath.Ext(originalPath))
+	}
+
 	file, err := os.Open(originalPath)
 	if err != nil {
-		panic(err)
+		return fmt.Errorf("open image: %w", err)
 	}
 	defer file.Close()
-	fmt.Println("About to decode: ", originalPath)
 
 	img, _, err := image.Decode(file)
 	if err != nil {
-		panic(err)
+		return fmt.Errorf("decode image: %w", err)
 	}
 
 	bounds := img.Bounds()
 	width := bounds.Dx()
 	height := bounds.Dy()
 	dimensionsToGenerate := FindFinalDimensions(width, height)
-	for dimension, _ := range dimensionsToGenerate {
-		size := dimensionsToGenerate[dimension]
+	if len(dimensionsToGenerate) == 0 {
+		return fmt.Errorf("image has invalid dimensions %dx%d", width, height)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(finalPath), 0755); err != nil {
+		return fmt.Errorf("create image output directory: %w", err)
+	}
+
+	options, err := encoder.NewLossyEncoderOptions(encoder.PresetDefault, 75)
+	if err != nil {
+		return fmt.Errorf("create WebP encoder: %w", err)
+	}
+
+	for _, size := range dimensionsToGenerate {
 		resized := resize.Resize(uint(size.W), uint(size.H), img, resize.Lanczos3)
 		ext := filepath.Ext(finalPath)
 		baseFileName := finalPath[:len(finalPath)-len(ext)]
 		locationToSave := baseFileName + "." + strconv.Itoa(size.W) + ".webp"
 		outputFile, err := os.Create(locationToSave)
 		if err != nil {
-			panic(err)
+			return fmt.Errorf("create generated image %q: %w", locationToSave, err)
 		}
-		defer outputFile.Close()
-		options, _ := encoder.NewLossyEncoderOptions(encoder.PresetDefault, 75) //75 is the quality, we'll see how this goes
-		err = webp.Encode(outputFile, resized, options)
-		if err != nil {
-			panic(err)
+		if err := webp.Encode(outputFile, resized, options); err != nil {
+			outputFile.Close()
+			return fmt.Errorf("encode generated image %q: %w", locationToSave, err)
+		}
+		if err := outputFile.Close(); err != nil {
+			return fmt.Errorf("close generated image %q: %w", locationToSave, err)
 		}
 	}
 
+	return nil
 }
 
 func AdaptImgTag(originalElement string, isFirst bool) string {
 	//TODO: This function is really slow for what it does, which is a risk for things like the Cloudflare 20 minute site build. A single run for a large image often takes multiple seconds.
 	// It may be better to go through the directory and pattern match the name (since they're already generated) instead of deterministically figuring out what resolutions it would be from scratch
 
-	fmt.Println("we got sent", originalElement)
 	//in another file, we'll have a regex that finds all image tags and adapts them to use srcset
 	// we want to take the original tag, which includes a reference to the original src, locate the file and figure out its dimensions (we are guaranteed that the images are already generated) and splice in the srcset.
 	//<img src="path/to/image.jpg" alt="description"> might be our input here
-	srcRegex := regexp.MustCompile(`src="([^"]+)"`)
 	matches := srcRegex.FindStringSubmatch(originalElement)
 	if len(matches) < 2 {
-		panic("Could not find src attribute in img tag")
-	}
-	if strings.HasPrefix(matches[1], "https://") || strings.HasPrefix(matches[1], "http://") {
-		//we don't handle external images for now
 		return originalElement
 	}
-	srcPath := matches[1]
+	if srcsetRegex.MatchString(originalElement) {
+		return originalElement
+	}
 
-	file, err := os.Open("routes" + srcPath)
+	srcURL, err := url.Parse(matches[1])
+	if err != nil || srcURL.Scheme != "" || srcURL.Host != "" || strings.HasPrefix(matches[1], "//") || !IsSupportedRasterPath(srcURL.Path) {
+		return originalElement
+	}
+
+	srcPath := path.Clean("/" + srcURL.Path)
+	diskPath := filepath.Join("routes", filepath.FromSlash(strings.TrimPrefix(srcPath, "/")))
+
+	file, err := os.Open(diskPath)
 	if err != nil {
-		panic(err)
+		return originalElement
 	}
 	defer file.Close()
 
 	img, _, err := image.Decode(file)
 	if err != nil {
-		panic(err)
+		return originalElement
 	}
 
 	bounds := img.Bounds()
@@ -127,11 +169,15 @@ func AdaptImgTag(originalElement string, isFirst bool) string {
 	dimensionsToGenerate := FindFinalDimensions(width, height)
 
 	srcsetParts := []string{}
-	for dimension := range dimensionsToGenerate {
-		size := dimensionsToGenerate[dimension]
-		ext := filepath.Ext(srcPath)
+	for _, size := range dimensionsToGenerate {
+		ext := path.Ext(srcPath)
 		baseFileName := srcPath[:len(srcPath)-len(ext)]
-		locationToUse := baseFileName + "." + strconv.Itoa(size.W) + ".webp"
+		generatedURL := &url.URL{
+			Path:     baseFileName + "." + strconv.Itoa(size.W) + ".webp",
+			RawQuery: srcURL.RawQuery,
+			Fragment: srcURL.Fragment,
+		}
+		locationToUse := generatedURL.String()
 		srcsetParts = append(srcsetParts, locationToUse+" "+strconv.Itoa(size.W)+"w")
 	}
 
