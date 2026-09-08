@@ -11,6 +11,7 @@ import (
 	"syscall"
 
 	"github.com/louis-bourgault/ssg/builder"
+	createproject "github.com/louis-bourgault/ssg/create"
 	"github.com/louis-bourgault/ssg/dev"
 )
 
@@ -32,6 +33,23 @@ func run() error {
 	}
 
 	switch subcommand := os.Args[1]; subcommand {
+	case "create":
+		flags := flag.NewFlagSet("create", flag.ContinueOnError)
+		if err := flags.Parse(os.Args[2:]); err != nil {
+			return err
+		}
+		if flags.NArg() > 1 {
+			return errors.New("usage: ssg create [directory]")
+		}
+		destination := "."
+		if flags.NArg() == 1 {
+			destination = flags.Arg(0)
+		}
+		return createproject.Run(createproject.Options{
+			Destination: destination,
+			Input:       os.Stdin,
+			Output:      os.Stdout,
+		})
 	case "dev":
 		flags := flag.NewFlagSet("dev", flag.ContinueOnError)
 		host := flags.String("host", "127.0.0.1", "host interface to bind")
@@ -66,7 +84,7 @@ func run() error {
 		}
 		return nil
 	default:
-		return fmt.Errorf("unknown command %q; run without a command to build, or use 'dev' or 'serve'", subcommand)
+		return fmt.Errorf("unknown command %q; run without a command to build, or use 'create', 'dev', or 'serve'", subcommand)
 	}
 }
 

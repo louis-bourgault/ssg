@@ -1,0 +1,11 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "ssg-site",
+  "compatibility_date": "2026-09-08",
+  "assets": {
+    "directory": "./build"
+  },
+  "build": {
+    "command": "./cloudflare_build.sh"
+  }
+}
