@@ -7,14 +7,22 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/louis-bourgault/ssg/dev"
 	"github.com/louis-bourgault/ssg/image"
 	"github.com/louis-bourgault/ssg/index"
 	"github.com/louis-bourgault/ssg/renderer"
+	"github.com/louis-bourgault/ssg/sitepath"
+	"github.com/louis-bourgault/ssg/templating"
 	"github.com/louis-bourgault/ssg/types"
 )
+
+type templateSource struct {
+	path    string
+	content string
+}
 
 func readFile(filename string) (string, error) {
 	content, err := os.ReadFile(filename)
@@ -68,8 +76,8 @@ func run() error {
 
 func BuildFromDirectory(rootPath string) error {
 	var filesFound = []types.File{}
-	var templates = make(map[string]string)
-	projectIndices := index.NewProjectIndex()
+	var templates = make(map[string]templateSource)
+	projectIndices := index.NewProjectIndexForRoutes(rootPath)
 
 	err := filepath.WalkDir(rootPath, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -77,6 +85,7 @@ func BuildFromDirectory(rootPath string) error {
 		}
 		if d.IsDir() {
 			fmt.Println("directory:", path)
+			projectIndices.AddDirectory(path)
 		} else {
 			slashed := filepath.ToSlash(path)
 			fmt.Println("file:", slashed)
@@ -89,7 +98,7 @@ func BuildFromDirectory(rootPath string) error {
 				if err != nil {
 					return fmt.Errorf("read template %q: %w", path, err)
 				}
-				templates[directory] = template
+				templates[directory] = templateSource{path: slashed, content: template}
 				fmt.Println("added template to map for the path", directory)
 			} else if last != ".index.json" {
 				filesFound = append(filesFound, types.File{
@@ -104,6 +113,12 @@ func BuildFromDirectory(rootPath string) error {
 	if err != nil {
 		return fmt.Errorf("scan source directory %q: %w", rootPath, err)
 	}
+	applicableTemplates := make(map[string]templateSource)
+	for i := range filesFound {
+		if filesFound[i].Type == "md" {
+			applicableTemplates[filesFound[i].OriginalPath] = findTemplateSource(filesFound[i].OriginalPath, templates)
+		}
+	}
 
 	for i := 0; i < len(filesFound); i++ {
 		if filesFound[i].Type == "md" { //only index markdown files
@@ -117,6 +132,20 @@ func BuildFromDirectory(rootPath string) error {
 			}
 		}
 	}
+	templateCache := templating.NewCache()
+	templatePaths := make([]string, 0, len(templates))
+	templatesByPath := make(map[string]templateSource, len(templates))
+	for _, template := range templates {
+		templatePaths = append(templatePaths, template.path)
+		templatesByPath[template.path] = template
+	}
+	sort.Strings(templatePaths)
+	for _, templatePath := range templatePaths {
+		template := templatesByPath[templatePath]
+		if _, err := templateCache.Compile(template.path, template.content); err != nil {
+			return err
+		}
+	}
 
 	stagingRoot, err := os.MkdirTemp(".", ".ssg-build-")
 	if err != nil {
@@ -126,20 +155,27 @@ func BuildFromDirectory(rootPath string) error {
 
 	for i := 0; i < len(filesFound); i++ {
 		var finished []byte
-		finalLocation := renderer.FindFinalPath(filesFound[i])
+		finalLocation, err := sitepath.OutputPath(rootPath, "build", filesFound[i].OriginalPath, filesFound[i].Type)
+		if err != nil {
+			return err
+		}
 		stagedLocation, err := stagedBuildPath(stagingRoot, finalLocation)
 		if err != nil {
 			return err
 		}
 
 		if filesFound[i].Type == "md" {
-			template, path := renderer.FindTemplate(filesFound[i].OriginalPath, templates)
-			content, err := readFile(filepath.FromSlash(filesFound[i].OriginalPath))
+			template := applicableTemplates[filesFound[i].OriginalPath]
+			compiled, err := templateCache.Compile(template.path, template.content)
 			if err != nil {
-				return fmt.Errorf("read Markdown file %q: %w", filesFound[i].OriginalPath, err)
+				return err
 			}
-			fmt.Println("Generating with the template ", path, "and the file", filesFound[i].OriginalPath)
-			rendered, err := renderer.GenerateSingleFile(content, template, filesFound[i].OriginalPath, projectIndices)
+			page, exists := projectIndices.Page(filesFound[i].OriginalPath)
+			if !exists {
+				return fmt.Errorf("indexed Markdown page %q is unavailable", filesFound[i].OriginalPath)
+			}
+			fmt.Println("Generating with the template ", template.path, "and the file", filesFound[i].OriginalPath)
+			rendered, err := renderer.GeneratePage(*page, compiled, projectIndices)
 			if err != nil {
 				return err
 			}
@@ -173,6 +209,22 @@ func BuildFromDirectory(rootPath string) error {
 		return err
 	}
 	return nil
+}
+
+func findTemplateSource(path string, templates map[string]templateSource) templateSource {
+	path = filepath.ToSlash(filepath.Clean(path))
+	for directory := filepath.ToSlash(filepath.Dir(path)); directory != "."; {
+		key := strings.TrimSuffix(directory, "/") + "/"
+		if template, exists := templates[key]; exists {
+			return template
+		}
+		parent := filepath.ToSlash(filepath.Dir(directory))
+		if parent == directory {
+			break
+		}
+		directory = parent
+	}
+	return templateSource{path: "<default template>", content: "<!doctype html><body>{{slot}}</body>"}
 }
 
 func stagedBuildPath(stagingRoot string, finalLocation string) (string, error) {

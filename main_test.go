@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -49,6 +50,59 @@ func TestFailedBuildPreservesPreviousOutput(t *testing.T) {
 	assertFileContent(t, filepath.Join("build", "previous.txt"), "previous")
 }
 
+func TestBuildRendersSortedCollectionsHeadingsAndLiteralMarkdownDirectives(t *testing.T) {
+	projectDir := t.TempDir()
+	t.Chdir(projectDir)
+	writeTestFile(t, filepath.Join("routes", "template.html"), `<!doctype html><title>{{meta.title}}</title>
+<nav>{{#each ./posts as post sort date desc}}<a href="{{post._url}}">{{post.title}}</a>{{/each}}</nav>
+<aside>{{#each meta.headings as heading}}<a href="#{{heading.id}}">{{heading.text}}</a>{{/each}}</aside>
+<main>{{slot}}</main>`)
+	writeTestFile(t, filepath.Join("routes", "index.md"), "---\ntitle: Home & More\n---\n# Welcome *friend*\n\nLiteral {{meta.not_evaluated}}\n")
+	writeTestFile(t, filepath.Join("routes", "posts", "template.html"), `<title>{{meta.title}}</title>{{slot}}`)
+	writeTestFile(t, filepath.Join("routes", "posts", "first.md"), "---\ntitle: First\ndate: 2025-01-01\n---\n# First\n")
+	writeTestFile(t, filepath.Join("routes", "posts", "second.md"), "---\ntitle: Second\ndate: 2026-01-01\n---\n# Second\n")
+
+	if err := BuildFromDirectory("routes"); err != nil {
+		t.Fatalf("build failed: %v", err)
+	}
+	content, err := os.ReadFile(filepath.Join("build", "index.html"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := string(content)
+	if !strings.Contains(output, `<title>Home &amp; More</title>`) {
+		t.Fatalf("metadata was not escaped: %s", output)
+	}
+	if strings.Index(output, ">Second<") > strings.Index(output, ">First<") || strings.Index(output, ">Second<") < 0 {
+		t.Fatalf("posts were not sorted descending: %s", output)
+	}
+	if !strings.Contains(output, `<a href="#welcome-friend">Welcome friend</a>`) {
+		t.Fatalf("heading collection missing: %s", output)
+	}
+	if !strings.Contains(output, `Literal {{meta.not_evaluated}}`) {
+		t.Fatalf("Markdown directive was evaluated: %s", output)
+	}
+	assertDoesNotExist(t, filepath.Join("build", "template.html"))
+	assertDoesNotExist(t, filepath.Join("build", "posts", "template.html"))
+}
+
+func TestBuildUsesNearestInheritedTemplate(t *testing.T) {
+	projectDir := t.TempDir()
+	t.Chdir(projectDir)
+	writeTestFile(t, filepath.Join("routes", "template.html"), `<div class="root">{{slot}}</div>`)
+	writeTestFile(t, filepath.Join("routes", "root.md"), "Root")
+	writeTestFile(t, filepath.Join("routes", "docs", "template.html"), `<div class="docs">{{slot}}</div>`)
+	writeTestFile(t, filepath.Join("routes", "docs", "guide.md"), "Guide")
+	writeTestFile(t, filepath.Join("routes", "docs", "deep", "page.md"), "Deep")
+
+	if err := BuildFromDirectory("routes"); err != nil {
+		t.Fatalf("build failed: %v", err)
+	}
+	assertContainsFile(t, filepath.Join("build", "root", "index.html"), `class="root"`)
+	assertContainsFile(t, filepath.Join("build", "docs", "guide", "index.html"), `class="docs"`)
+	assertContainsFile(t, filepath.Join("build", "docs", "deep", "page", "index.html"), `class="docs"`)
+}
+
 func writeTestFile(t *testing.T, filePath string, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
@@ -74,5 +128,16 @@ func assertDoesNotExist(t *testing.T, filePath string) {
 	t.Helper()
 	if _, err := os.Stat(filePath); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("%q exists or returned an unexpected error: %v", filePath, err)
+	}
+}
+
+func assertContainsFile(t *testing.T, filePath, expected string) {
+	t.Helper()
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(content), expected) {
+		t.Fatalf("%q does not contain %q: %s", filePath, expected, content)
 	}
 }
