@@ -8,13 +8,21 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/louis-bourgault/ssg/image"
 	"github.com/louis-bourgault/ssg/index"
 	"github.com/louis-bourgault/ssg/renderer"
+	"github.com/louis-bourgault/ssg/sitepath"
+	"github.com/louis-bourgault/ssg/templating"
 	"github.com/louis-bourgault/ssg/types"
 )
+
+type templateSource struct {
+	path    string
+	content string
+}
 
 // Options configures a complete site build.
 type Options struct {
@@ -62,15 +70,32 @@ func Build(ctx context.Context, options Options) error {
 	}
 	defer os.RemoveAll(stagingRoot)
 
-	renderOptions := renderer.Options{SourceDir: sourceDir, OutputDir: outputDir}
+	templateCache := templating.NewCache()
+	templatePaths := make([]string, 0, len(templates))
+	templatesByPath := make(map[string]templateSource, len(templates))
+	for _, template := range templates {
+		templatePaths = append(templatePaths, template.path)
+		templatesByPath[template.path] = template
+	}
+	sort.Strings(templatePaths)
+	for _, templatePath := range templatePaths {
+		if _, err := templateCache.Compile(templatePath, templatesByPath[templatePath].content); err != nil {
+			return err
+		}
+	}
+
 	for _, file := range files {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 
-		relativeOutput, err := renderer.FinalRelativePath(file, sourceDir)
+		finalOutput, err := sitepath.OutputPath(sourceDir, outputDir, file.OriginalPath, file.Type)
 		if err != nil {
 			return err
+		}
+		relativeOutput, err := filepath.Rel(outputDir, filepath.FromSlash(finalOutput))
+		if err != nil {
+			return fmt.Errorf("resolve output path %q: %w", finalOutput, err)
 		}
 		stagedLocation := filepath.Join(stagingRoot, relativeOutput)
 		if !pathWithin(stagingRoot, stagedLocation) {
@@ -79,12 +104,16 @@ func Build(ctx context.Context, options Options) error {
 
 		var finished []byte
 		if strings.EqualFold(file.Type, "md") {
-			template, _ := renderer.FindTemplate(file.OriginalPath, templates)
-			content, err := os.ReadFile(file.OriginalPath)
+			template := findTemplateSource(file.OriginalPath, templates)
+			compiled, err := templateCache.Compile(template.path, template.content)
 			if err != nil {
-				return fmt.Errorf("read Markdown file %q: %w", file.OriginalPath, err)
+				return err
 			}
-			rendered, err := renderer.GenerateSingleFileWithOptions(string(content), template, file.OriginalPath, projectIndex, renderOptions)
+			page, exists := projectIndex.Page(file.OriginalPath)
+			if !exists {
+				return fmt.Errorf("indexed Markdown page %q is unavailable", file.OriginalPath)
+			}
+			rendered, err := renderer.GeneratePage(*page, compiled, projectIndex)
 			if err != nil {
 				return err
 			}
@@ -115,10 +144,10 @@ func Build(ctx context.Context, options Options) error {
 	return replaceDirectory(stagingRoot, outputDir)
 }
 
-func scanProject(ctx context.Context, sourceDir, outputDir string) ([]types.File, map[string]string, *index.ProjectIndex, error) {
+func scanProject(ctx context.Context, sourceDir, outputDir string) ([]types.File, map[string]templateSource, *index.ProjectIndex, error) {
 	var files []types.File
-	templates := make(map[string]string)
-	projectIndex := index.NewProjectIndex()
+	templates := make(map[string]templateSource)
+	projectIndex := index.NewProjectIndexForRoutes(sourceDir)
 
 	err := filepath.WalkDir(sourceDir, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -140,7 +169,9 @@ func scanProject(ctx context.Context, sourceDir, outputDir string) ([]types.File
 			if err != nil {
 				return fmt.Errorf("read template %q: %w", path, err)
 			}
-			templates[filepath.Clean(filepath.Dir(path))+string(filepath.Separator)] = string(content)
+			templates[filepath.Clean(filepath.Dir(path))+string(filepath.Separator)] = templateSource{
+				path: filepath.ToSlash(path), content: string(content),
+			}
 			return nil
 		}
 		if name == ".index.json" {
@@ -165,6 +196,21 @@ func scanProject(ctx context.Context, sourceDir, outputDir string) ([]types.File
 		return nil, nil, nil, fmt.Errorf("scan source directory %q: %w", sourceDir, err)
 	}
 	return files, templates, projectIndex, nil
+}
+
+func findTemplateSource(path string, templates map[string]templateSource) templateSource {
+	directory := filepath.Dir(filepath.Clean(path))
+	for {
+		if template, exists := templates[directory+string(filepath.Separator)]; exists {
+			return template
+		}
+		parent := filepath.Dir(directory)
+		if parent == directory {
+			break
+		}
+		directory = parent
+	}
+	return templateSource{path: "<default template>", content: "<!doctype html><body>{{slot}}</body>"}
 }
 
 func replaceDirectory(stagingRoot, outputRoot string) error {

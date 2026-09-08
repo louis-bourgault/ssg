@@ -1,80 +1,51 @@
 package renderer
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"io"
 	"net/url"
-	"os"
 	"path/filepath"
-	"regexp"
-	"strconv"
 	"strings"
 
 	"github.com/louis-bourgault/ssg/image"
 	"github.com/louis-bourgault/ssg/index"
+	"github.com/louis-bourgault/ssg/sitepath"
+	"github.com/louis-bourgault/ssg/templating"
 	"github.com/louis-bourgault/ssg/types"
-	"github.com/yuin/goldmark"
-	meta "github.com/yuin/goldmark-meta"
-	"github.com/yuin/goldmark/extension"
-	"github.com/yuin/goldmark/parser"
-	goldmarkHTML "github.com/yuin/goldmark/renderer/html"
 	"golang.org/x/net/html"
 )
 
-var (
-	metaPattern = regexp.MustCompile(`{{meta\.([^}]+)}}`)
-	eachPattern = regexp.MustCompile(`(?s){{#each\s+([^}]+)}}(.*?){{/each}}`)
-	itemPattern = regexp.MustCompile(`{{item\.([^}]+)}}`)
-)
-
-func GenerateSingleFile(content string, template string, path string, index *index.ProjectIndex) (string, error) {
-	return GenerateSingleFileWithOptions(content, template, path, index, Options{SourceDir: "routes", OutputDir: "build"})
-}
-
-// Options supplies the filesystem roots needed while resolving links and images.
-type Options struct {
-	SourceDir string
-	OutputDir string
-}
-
-func GenerateSingleFileWithOptions(content string, template string, path string, index *index.ProjectIndex, options Options) (string, error) {
-	md := goldmark.New(
-		goldmark.WithExtensions(
-			extension.GFM,
-			meta.Meta),
-		goldmark.WithParserOptions(
-			parser.WithAutoHeadingID(),
-		),
-		goldmark.WithRendererOptions(
-			goldmarkHTML.WithHardWraps(),
-			goldmarkHTML.WithXHTML(),
-			goldmarkHTML.WithUnsafe(),
-		),
-	)
-	var buf bytes.Buffer
-	context := parser.NewContext()
-	if err := md.Convert([]byte(content), &buf, parser.WithContext(context)); err != nil {
-		return "", fmt.Errorf("render Markdown %q: %w", path, err)
+func GenerateSingleFile(content string, templateSource string, path string, project *index.ProjectIndex) (string, error) {
+	routesDir := "routes"
+	if project != nil && project.RoutesDir != "" {
+		routesDir = project.RoutesDir
 	}
-	templateBefore, templateAfter, found := strings.Cut(template, "{{slot}}")
-	if !found {
-		return "", fmt.Errorf("template for %q must contain {{slot}}", path)
-	}
-	if strings.Contains(templateAfter, "{{slot}}") {
-		return "", fmt.Errorf("template for %q must contain exactly one {{slot}}", path)
-	}
-	joined := strings.Join([]string{PopulateMeta(context, templateBefore), buf.String(), PopulateMeta(context, templateAfter)}, "")
-	eachPop, err := populateEach(joined, index, path)
+	page, err := index.ParsePage(routesDir, path, content)
 	if err != nil {
 		return "", err
 	}
-	finalFile, err := processHTMLWithOptions(eachPop, path, true, true, options)
+	templatePath := filepath.ToSlash(filepath.Join(filepath.Dir(path), "template.html"))
+	parsed, err := templating.Parse(templatePath, templateSource)
 	if err != nil {
-		return "", fmt.Errorf("post-process HTML for %q: %w", path, err)
+		return "", err
 	}
+	return GeneratePage(page, parsed, project)
+}
 
+func GeneratePage(page index.Page, template *templating.Template, project *index.ProjectIndex) (string, error) {
+	rendered, err := templating.Render(template, templating.RenderContext{CurrentPage: page, Project: project})
+	if err != nil {
+		return "", err
+	}
+	routesDir := "routes"
+	if project != nil && project.RoutesDir != "" {
+		routesDir = project.RoutesDir
+	}
+	finalFile, err := processHTMLWithRoutes(rendered, page.SourcePath, routesDir, true, true)
+	if err != nil {
+		return "", fmt.Errorf("post-process HTML for %q: %w", page.SourcePath, err)
+	}
 	return finalFile, nil
 }
 
@@ -87,132 +58,11 @@ func OptimiseImages(documentText string) string {
 	return result
 }
 
-func PopulateMeta(ctx parser.Context, documentText string) string {
-	meta := meta.Get(ctx)
-
-	result := metaPattern.ReplaceAllStringFunc(documentText, func(match string) string {
-		key := metaPattern.FindStringSubmatch(match)[1]
-		value := meta[key]
-		return fmt.Sprintf("%v", value)
-	})
-
-	return result
-}
-
-func populateEach(documentText string, index *index.ProjectIndex, path string) (string, error) { //at the moment only works for directories, but i would like other types of collections such as headings in the document
-	//fmt.Println("populating each in the document")
-	//detect any area that starts with {{#each [...]}} and ends with {{/each}}
-	var renderErr error
-	content := eachPattern.ReplaceAllStringFunc(documentText, func(match string) string {
-		if renderErr != nil {
-			return match
-		}
-		//fmt.Println("processing each block:", match)
-		eachInner := eachPattern.FindStringSubmatch(match)
-		fieldName := eachInner[1]
-		blockContent := eachInner[2]
-		//fmt.Println("field name:", fieldName)
-		//fmt.Println("block content:", blockContent)
-
-		whereFrom := strings.Split(fieldName, " ")[0]
-		//fmt.Println("where from:", whereFrom)
-
-		folderToLook := filepath.Join(filepath.Dir(path), whereFrom)
-		//fmt.Println("folder to look:", folderToLook)
-
-		if index == nil {
-			renderErr = fmt.Errorf("render collection in %q: project index is unavailable", path)
-			return match
-		}
-		directoryIndex, exists := index.Directories[folderToLook]
-		if !exists {
-			renderErr = fmt.Errorf("render collection in %q: directory %q is not indexed", path, folderToLook)
-			return match
-		}
-		//fmt.Println("found directory index for", folderToLook)
-
-		compiledHTML := ""
-
-		// Regex to find all {{item.PropertyName}} patterns in the block content
-		for _, fileIndex := range directoryIndex.Files {
-			itemContent := itemPattern.ReplaceAllStringFunc(blockContent, func(itemMatch string) string {
-				if renderErr != nil {
-					return itemMatch
-				}
-				//fmt.Println("item match", itemMatch)
-				propertyName := itemPattern.FindStringSubmatch(itemMatch)[1]
-				if strings.HasPrefix(propertyName, "_preview") {
-					previewLengthStr := strings.TrimPrefix(propertyName, "_preview")
-					previewLength, err := strconv.Atoi(previewLengthStr)
-					if err != nil || previewLength < 0 {
-						renderErr = fmt.Errorf("invalid preview length %q in %q", previewLengthStr, path)
-						return itemMatch
-					}
-					//there could be a better way than converting to html and then removing, but this does the job for now
-					originalFilePath := fileIndex.File.OriginalPath
-					fileContentBytes, err := os.ReadFile(originalFilePath)
-					if err != nil {
-						renderErr = fmt.Errorf("read preview source %q: %w", originalFilePath, err)
-						return itemMatch
-					}
-					fileContent := stripYamlProperties(string(fileContentBytes))
-					md := goldmark.New()
-					var buf bytes.Buffer
-					if err := md.Convert([]byte(fileContent), &buf); err != nil {
-						renderErr = fmt.Errorf("render preview source %q: %w", originalFilePath, err)
-						return itemMatch
-					}
-
-					plaintext := extractText(buf.String())
-
-					previewRunes := []rune(plaintext)
-					if len(previewRunes) > previewLength {
-						return string(previewRunes[:previewLength]) + "..."
-					}
-					return plaintext
-				}
-				//fmt.Println("property name:", propertyName)
-				value, exists := fileIndex.Properties[propertyName]
-				if !exists {
-					return ""
-				}
-				return fmt.Sprintf("%v", value)
-			})
-			compiledHTML += itemContent
-		}
-
-		return compiledHTML
-	})
-
-	return content, renderErr
-}
-
-func stripYamlProperties(content string) string {
-	if !strings.HasPrefix(content, "---") {
-		return content
-	}
-
-	lines := strings.Split(content, "\n")
-	endIndex := -1
-	for i := 1; i < len(lines); i++ {
-		if strings.TrimSpace(lines[i]) == "---" {
-			endIndex = i
-			break
-		}
-	}
-
-	if endIndex == -1 {
-		return content
-	}
-
-	return strings.Join(lines[endIndex+1:], "\n")
-}
-
 func processHTML(documentText string, currentFilePath string, rewriteLinks bool, optimiseImages bool) (string, error) {
-	return processHTMLWithOptions(documentText, currentFilePath, rewriteLinks, optimiseImages, Options{SourceDir: "routes", OutputDir: "build"})
+	return processHTMLWithRoutes(documentText, currentFilePath, "routes", rewriteLinks, optimiseImages)
 }
 
-func processHTMLWithOptions(documentText string, currentFilePath string, rewriteLinks bool, optimiseImages bool, options Options) (string, error) {
+func processHTMLWithRoutes(documentText string, currentFilePath string, routesDir string, rewriteLinks bool, optimiseImages bool) (string, error) {
 	tokenizer := html.NewTokenizer(strings.NewReader(documentText))
 	var output strings.Builder
 	isFirstImage := true
@@ -239,7 +89,7 @@ func processHTMLWithOptions(documentText string, currentFilePath string, rewrite
 				if attribute.Key != "href" && attribute.Key != "src" {
 					continue
 				}
-				if rewritten, ok := rewriteRelativeURLWithOptions(attribute.Val, currentFilePath, options); ok {
+				if rewritten, ok := rewriteRelativeURLWithRoutes(attribute.Val, currentFilePath, routesDir); ok {
 					attribute.Val = rewritten
 					changed = true
 				}
@@ -247,7 +97,7 @@ func processHTMLWithOptions(documentText string, currentFilePath string, rewrite
 		}
 
 		if optimiseImages && token.Data == "img" {
-			if optimiseImageToken(&token, isFirstImage, options.SourceDir) {
+			if optimiseImageToken(&token, isFirstImage, routesDir) {
 				changed = true
 			}
 			isFirstImage = false
@@ -261,7 +111,7 @@ func processHTMLWithOptions(documentText string, currentFilePath string, rewrite
 	}
 }
 
-func optimiseImageToken(token *html.Token, isFirst bool, sourceDir string) bool {
+func optimiseImageToken(token *html.Token, isFirst bool, routesDir string) bool {
 	var source string
 	for _, attribute := range token.Attr {
 		if attribute.Key == "srcset" {
@@ -275,7 +125,7 @@ func optimiseImageToken(token *html.Token, isFirst bool, sourceDir string) bool 
 		return false
 	}
 
-	srcset, ok := image.BuildSrcsetFrom(source, sourceDir)
+	srcset, ok := image.BuildSrcsetFrom(source, routesDir)
 	if !ok {
 		return false
 	}
@@ -301,10 +151,10 @@ func hasAttribute(attributes []html.Attribute, name string) bool {
 }
 
 func rewriteRelativeURL(rawURL string, currentFilePath string) (string, bool) {
-	return rewriteRelativeURLWithOptions(rawURL, currentFilePath, Options{SourceDir: "routes", OutputDir: "build"})
+	return rewriteRelativeURLWithRoutes(rawURL, currentFilePath, "routes")
 }
 
-func rewriteRelativeURLWithOptions(rawURL string, currentFilePath string, options Options) (string, bool) {
+func rewriteRelativeURLWithRoutes(rawURL string, currentFilePath string, routesDir string) (string, bool) {
 	parsedURL, err := url.Parse(rawURL)
 	if err != nil || parsedURL.Scheme != "" || parsedURL.Host != "" || parsedURL.Path == "" || strings.HasPrefix(rawURL, "//") || strings.HasPrefix(parsedURL.Path, "/") {
 		return rawURL, false
@@ -313,13 +163,11 @@ func rewriteRelativeURLWithOptions(rawURL string, currentFilePath string, option
 	targetPath := filepath.Join(filepath.Dir(currentFilePath), filepath.FromSlash(parsedURL.Path))
 	targetPath = filepath.ToSlash(filepath.Clean(targetPath))
 	fileType := strings.TrimPrefix(strings.ToLower(filepath.Ext(parsedURL.Path)), ".")
-	targetFile := types.File{OriginalPath: targetPath, Type: fileType}
-
-	relativePath, err := FinalRelativePath(targetFile, options.SourceDir)
+	finalPath, err := sitepath.OutputPath(routesDir, "build", targetPath, fileType)
 	if err != nil {
 		return rawURL, false
 	}
-	webPath := filepath.ToSlash(relativePath)
+	webPath := strings.TrimPrefix(finalPath, "build")
 	webPath = strings.TrimSuffix(webPath, "index.html")
 	webPath = "/" + strings.TrimPrefix(webPath, "/")
 
@@ -342,62 +190,23 @@ func extractText(documentText string) string {
 }
 
 func FindFinalPath(file types.File) string { //takes an original path, starting in 'routes' and resolves it to the location, ending in "build"
-	relative, err := FinalRelativePath(file, "routes")
+	path, err := sitepath.OutputPath("routes", "build", file.OriginalPath, file.Type)
 	if err != nil {
 		return ""
 	}
-	return filepath.ToSlash(filepath.Join("build", relative))
-}
-
-// FinalRelativePath returns a file's generated path relative to the output root.
-func FinalRelativePath(file types.File, sourceDir string) (string, error) {
-	sourceAbs, err := filepath.Abs(sourceDir)
-	if err != nil {
-		return "", fmt.Errorf("resolve source directory: %w", err)
-	}
-	fileAbs, err := filepath.Abs(filepath.FromSlash(file.OriginalPath))
-	if err != nil {
-		return "", fmt.Errorf("resolve source path %q: %w", file.OriginalPath, err)
-	}
-	relative, err := filepath.Rel(sourceAbs, fileAbs)
-	if err != nil {
-		return "", fmt.Errorf("resolve source-relative path %q: %w", file.OriginalPath, err)
-	}
-	if relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) || filepath.IsAbs(relative) {
-		return "", fmt.Errorf("source path %q escapes source directory %q", file.OriginalPath, sourceDir)
-	}
-
-	clean := filepath.Clean(relative)
-	if strings.EqualFold(filepath.Base(clean), "index.md") {
-		return filepath.Join(filepath.Dir(clean), "index.html"), nil
-	}
-	if strings.EqualFold(filepath.Base(clean), "index.html") {
-		return clean, nil
-	}
-	if strings.EqualFold(file.Type, "md") {
-		extension := filepath.Ext(clean)
-		clean = strings.TrimSuffix(clean, extension)
-		return filepath.Join(clean, "index.html"), nil
-	}
-	return clean, nil
+	return path
 }
 
 func FindTemplate(path string, templates map[string]string) (template string, templatePath string) {
-	directory := filepath.Dir(filepath.FromSlash(path))
-	for {
-		pathToCheck := filepath.Clean(directory) + string(filepath.Separator)
-		if template := templates[pathToCheck]; template != "" {
+	parts := strings.Split(path, "/")
+	// find the closest template to the file path by working upwards
+	for i := len(parts) - 1; i > 0; i-- {
+		pathToCheck := strings.Join(parts[0:i], "/") + "/"
+		//fmt.Println("checking path", pathToCheck)
+		template := templates[pathToCheck]
+		if template != "" {
 			return template, pathToCheck
 		}
-		slashed := filepath.ToSlash(filepath.Clean(directory)) + "/"
-		if template := templates[slashed]; template != "" {
-			return template, slashed
-		}
-		parent := filepath.Dir(directory)
-		if parent == directory {
-			break
-		}
-		directory = parent
 	}
 	return "<!doctype html><body>{{slot}}</body>", ""
 }
