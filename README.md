@@ -122,11 +122,24 @@ sudo apt-get install libwebp-dev
 
 ## Initialising
 
-Use [degit](https://github.com/Rich-Harris/degit), by Rich Harris, or copy the template directory of this repository:
+Create a site interactively in the current directory:
 
 ```sh
-degit louis-bourgault/ssg/template
+ssg create
 ```
+
+Or provide a new directory:
+
+```sh
+ssg create my-site
+```
+
+Choose a bundled site template and then a deployment provider. Selecting a
+provider adds its build script and configuration; select `None / VPS` to create
+only the site files. Provider build scripts download the latest Linux x86-64
+SSG release before building. Set `SSG_VERSION` in the provider environment to a
+release tag, such as `v0.1.0`, to pin deployments to a specific version.
+Creation refuses to write into a non-empty directory.
 
 ## Development server
 
