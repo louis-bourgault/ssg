@@ -101,7 +101,6 @@ func BuildFromDirectory(rootPath string) {
 		}
 	}
 	projectIndices.Finalise()
-	imageExtensions := []string{"jpg", "jpeg", "png", "tiff", "gif", "bmp", "webp"}
 
 	for i := 0; i < len(filesFound); i++ {
 		var finished []byte
@@ -115,15 +114,10 @@ func BuildFromDirectory(rootPath string) {
 		} else { //this would be the place to put webp logic
 			file, _ := readFile(filepath.FromSlash(filesFound[i].OriginalPath))
 			finished = []byte(file)
-			isImage := false
-			for _, ext := range imageExtensions {
-				if filesFound[i].Type == ext {
-					isImage = true
-					break
+			if image.IsSupportedRasterPath(filesFound[i].OriginalPath) {
+				if err := image.GenerateImages(filesFound[i].OriginalPath, finalLocation); err != nil {
+					fmt.Printf("Could not optimise image %s: %v\n", filesFound[i].OriginalPath, err)
 				}
-			}
-			if isImage {
-				image.GenerateImages(filesFound[i].OriginalPath, finalLocation)
 			}
 
 		}
