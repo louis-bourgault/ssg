@@ -43,7 +43,6 @@ Possible things to add are:
 - dev server
 - preload on hover (optional postprocessing system)
 - {each} tags as above
-- change some parsing from weird ```strings.Split``` hacky solutions to using regex properly
 
 ## Environment
 For webp, we use a library that does conversions through C bindings. Thus, you should use a machine with cgo working to compile and run this. If you're on windows, you could go through the hassle of installing MYS32, but do yourself a favour and just use WSL instead (or delete windows entirely, preferably)

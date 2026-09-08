@@ -34,36 +34,33 @@ func TestGenerateImagesRejectsUnsupportedType(t *testing.T) {
 	}
 }
 
-func TestAdaptImgTagLeavesUnsupportedSourcesAlone(t *testing.T) {
+func TestBuildSrcsetRejectsUnsupportedSources(t *testing.T) {
 	tests := []string{
-		`<img src="/icon.svg" alt="icon" />`,
-		`<img src="https://example.com/photo.png" alt="remote" />`,
-		`<img src="//example.com/photo.png" alt="remote" />`,
-		`<img src="data:image/png;base64,abc" alt="inline" />`,
-		`<img alt="missing source" />`,
-		`<img src="/missing.png" alt="missing file" />`,
+		"/icon.svg",
+		"https://example.com/photo.png",
+		"//example.com/photo.png",
+		"data:image/png;base64,abc",
+		"/missing.png",
 	}
 
-	for _, original := range tests {
-		if got := AdaptImgTag(original, false); got != original {
-			t.Errorf("AdaptImgTag changed unsupported source:\n got: %s\nwant: %s", got, original)
+	for _, source := range tests {
+		if srcset, ok := BuildSrcset(source); ok {
+			t.Errorf("BuildSrcset accepted unsupported source %q: %s", source, srcset)
 		}
 	}
 }
 
-func TestAdaptImgTagAddsSrcsetForLocalRasterImage(t *testing.T) {
+func TestBuildSrcsetForLocalRasterImage(t *testing.T) {
 	tempDir := t.TempDir()
 	t.Chdir(tempDir)
 	writeTestPNG(t, filepath.Join(tempDir, "routes", "photo.png"), 8, 4)
 
-	original := `<img src="/photo.png" alt="photo" />`
-	got := AdaptImgTag(original, false)
-
-	if !strings.Contains(got, `srcset="/photo.8.webp 8w"`) {
-		t.Fatalf("AdaptImgTag did not add the expected srcset: %s", got)
+	srcset, ok := BuildSrcset("/photo.png")
+	if !ok {
+		t.Fatal("BuildSrcset rejected a local raster image")
 	}
-	if !strings.Contains(got, `loading="lazy" decoding="async"`) {
-		t.Fatalf("AdaptImgTag did not add lazy-loading attributes: %s", got)
+	if !strings.Contains(srcset, "/photo.8.webp 8w") {
+		t.Fatalf("BuildSrcset did not return the expected candidate: %s", srcset)
 	}
 }
 

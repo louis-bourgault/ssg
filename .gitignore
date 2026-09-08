@@ -1,4 +1,8 @@
 *build/
+.ssg-build-*
+.ssg-previous-build-*
+.projectindex.json
+.index.json
 
 
 routes/**

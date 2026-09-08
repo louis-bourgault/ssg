@@ -1,7 +1,6 @@
 package dev
 
 import (
-	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -15,7 +14,7 @@ import (
 
 //this is a dev server implementation
 
-func RunDevServer() {
+func RunDevServer() error {
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Println("Serving URL path", r.URL.Path)
@@ -30,7 +29,9 @@ func RunDevServer() {
 				return
 			}
 			w.Header().Set("Content-Type", getContentType(r.URL.Path))
-			w.Write(content)
+			if _, err := w.Write(content); err != nil {
+				log.Println("Error writing static response:", err)
+			}
 			return
 		}
 
@@ -57,27 +58,43 @@ func RunDevServer() {
 		log.Println("Found file at", path)
 
 		templatePath := FindTemplateRuntime(path)
-		template, err := os.ReadFile(templatePath)
-		if templatePath == "" || err != nil {
+		var template []byte
+		if templatePath == "" {
 			template = []byte("<!doctype html><body>{{slot}}</body>")
-		}
-
-		projData, err := os.ReadFile(".projectindex.json")
-		var projectIndices *index.ProjectIndex
-		if err == nil {
-			var pi index.ProjectIndex
-			if err := json.Unmarshal(projData, &pi); err == nil {
-				projectIndices = &pi
+		} else {
+			template, err = os.ReadFile(templatePath)
+			if err != nil {
+				log.Println("Error reading template:", err)
+				http.Error(w, "Could not read page template", http.StatusInternalServerError)
+				return
 			}
 		}
 
-		w.Write([]byte(injectWSScript(renderer.GenerateSingleFile(string(file), string(template), path, projectIndices), r.URL.Path)))
+		projectIndices, err := index.BuildFromDirectory("routes")
+		if err != nil {
+			log.Println("Error building project index:", err)
+			http.Error(w, "Could not build project index", http.StatusInternalServerError)
+			return
+		}
+
+		rendered, err := renderer.GenerateSingleFile(string(file), string(template), path, projectIndices)
+		if err != nil {
+			log.Println("Error rendering page:", err)
+			http.Error(w, "Could not render page", http.StatusInternalServerError)
+			return
+		}
+		if _, err := w.Write([]byte(injectWSScript(rendered, r.URL.Path))); err != nil {
+			log.Println("Error writing response:", err)
+		}
 	})
 
 	http.HandleFunc("/_devws/", DevWS)
 
 	fmt.Println("Server starting on port 8080...")
-	http.ListenAndServe(":8080", nil)
+	if err := http.ListenAndServe(":8080", nil); err != nil {
+		return fmt.Errorf("run development server: %w", err)
+	}
+	return nil
 }
 
 func getContentType(path string) string {

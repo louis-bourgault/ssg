@@ -2,11 +2,11 @@ package index
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
-	"log"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/louis-bourgault/ssg/types"
@@ -19,35 +19,41 @@ type ProjectIndex struct {
 	Directories map[string]*DirectoryIndex
 }
 
-func (p *ProjectIndex) Finalise() {
-	//write everything to disk
-	for dirPath, dirIndex := range p.Directories {
-		//log.Println("Finalising directory of ", dirPath, "with", len(dirIndex.Files), "files")
-		jsonData, err := json.Marshal(dirIndex)
-		if err != nil {
-			log.Println("Error marshalling index for directory", dirPath, ":", err)
-			continue
-		}
-		//fmt.Println(string(jsonData))
-		//write to a file called .index.json in the directory that it's indexing
-		indexFilePath := filepath.Join(dirPath, ".index.json")
-		err = os.WriteFile(indexFilePath, jsonData, 0644)
-		if err != nil {
-			log.Println("Error writing index file for directory", dirPath, ":", err)
-		}
-	}
-	jsonData, err := json.Marshal(p)
-	if err != nil {
-		log.Println("Error marshalling project index:", err)
-		return
-	}
-	err = os.WriteFile(".projectindex.json", jsonData, 0644)
-	if err != nil {
-		log.Println("Error writing project index file:", err)
-	}
+func NewProjectIndex() *ProjectIndex {
+	return &ProjectIndex{Directories: map[string]*DirectoryIndex{}}
 }
 
-func (p *ProjectIndex) AddFile(file types.File, content string) {
+func BuildFromDirectory(rootPath string) (*ProjectIndex, error) {
+	projectIndex := NewProjectIndex()
+	err := filepath.WalkDir(rootPath, func(filePath string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() || !strings.EqualFold(filepath.Ext(entry.Name()), ".md") {
+			return nil
+		}
+
+		content, err := os.ReadFile(filePath)
+		if err != nil {
+			return fmt.Errorf("read index source %q: %w", filePath, err)
+		}
+		file := types.File{
+			OriginalPath: filepath.ToSlash(filePath),
+			Type:         "md",
+		}
+		if err := projectIndex.AddFile(file, string(content)); err != nil {
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("build project index: %w", err)
+	}
+
+	return projectIndex, nil
+}
+
+func (p *ProjectIndex) AddFile(file types.File, content string) error {
 	//log.Println("Recieved file, ", file.OriginalPath)
 	directory := filepath.Dir(file.OriginalPath)
 	dirIndex, exists := p.Directories[directory]
@@ -55,7 +61,7 @@ func (p *ProjectIndex) AddFile(file types.File, content string) {
 		dirIndex = NewDirectoryIndex(directory)
 		p.Directories[directory] = dirIndex
 	}
-	dirIndex.AddFile(file, content)
+	return dirIndex.AddFile(file, content)
 }
 
 type DirectoryIndex struct {
@@ -77,7 +83,7 @@ func NewDirectoryIndex(path string) *DirectoryIndex {
 	}
 }
 
-func (d *DirectoryIndex) AddFile(file types.File, content string) {
+func (d *DirectoryIndex) AddFile(file types.File, content string) error {
 	//log.Println("Recieved file, ", file.OriginalPath)
 	markdown := goldmark.New(
 		goldmark.WithExtensions(
@@ -88,12 +94,7 @@ func (d *DirectoryIndex) AddFile(file types.File, content string) {
 	var buf bytes.Buffer
 	context := parser.NewContext()
 	if err := markdown.Convert([]byte(content), &buf, parser.WithContext(context)); err != nil {
-		log.Println("Error converting markdown for", file.OriginalPath, ":", err)
-		d.Files = append(d.Files, FileIndex{
-			File:       file,
-			Properties: make(map[string]any),
-		})
-		return
+		return fmt.Errorf("parse metadata for %q: %w", file.OriginalPath, err)
 	}
 	metaData := meta.Get(context)
 
@@ -111,7 +112,6 @@ func (d *DirectoryIndex) AddFile(file types.File, content string) {
 
 			actualType := DetectType(value)
 			if actualType != propType {
-				log.Println("Property", key, "has different types across files:", propType, "and", actualType)
 				if propType != "string" {
 					for i := range d.Files {
 						d.Files[i].Properties[key] = fmt.Sprintf("%v", d.Files[i].Properties[key])
@@ -135,6 +135,7 @@ func (d *DirectoryIndex) AddFile(file types.File, content string) {
 		Properties: metaData,
 	})
 
+	return nil
 }
 
 func DetectType(value any) string {

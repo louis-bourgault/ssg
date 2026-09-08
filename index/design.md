@@ -1,7 +1,7 @@
 
  INDEXING SYSTEM
  
- for {each} blocks to work, we need a way to index files. We detect properties that every file in that directory has in common in the yaml frontmatter, and then create a json index file that contains an array of all the files
+ for {each} blocks to work, we need a way to index files. We detect properties that every file in that directory has in common in the yaml frontmatter, then keep an in-memory project index containing all the files. The development server rebuilds this index from the source files when it renders a page; generated index files are not written into the routes or build directories.
 
  Schema:
 

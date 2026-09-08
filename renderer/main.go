@@ -2,7 +2,10 @@ package renderer
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
+	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -16,10 +19,17 @@ import (
 	meta "github.com/yuin/goldmark-meta"
 	"github.com/yuin/goldmark/extension"
 	"github.com/yuin/goldmark/parser"
-	"github.com/yuin/goldmark/renderer/html"
+	goldmarkHTML "github.com/yuin/goldmark/renderer/html"
+	"golang.org/x/net/html"
 )
 
-func GenerateSingleFile(content string, template string, path string, index *index.ProjectIndex) string {
+var (
+	metaPattern = regexp.MustCompile(`{{meta\.([^}]+)}}`)
+	eachPattern = regexp.MustCompile(`(?s){{#each\s+([^}]+)}}(.*?){{/each}}`)
+	itemPattern = regexp.MustCompile(`{{item\.([^}]+)}}`)
+)
+
+func GenerateSingleFile(content string, template string, path string, index *index.ProjectIndex) (string, error) {
 	md := goldmark.New(
 		goldmark.WithExtensions(
 			extension.GFM,
@@ -28,46 +38,49 @@ func GenerateSingleFile(content string, template string, path string, index *ind
 			parser.WithAutoHeadingID(),
 		),
 		goldmark.WithRendererOptions(
-			html.WithHardWraps(),
-			html.WithXHTML(),
-			html.WithUnsafe(),
+			goldmarkHTML.WithHardWraps(),
+			goldmarkHTML.WithXHTML(),
+			goldmarkHTML.WithUnsafe(),
 		),
 	)
 	fmt.Println("Generating single file for path:", path)
 	var buf bytes.Buffer
 	context := parser.NewContext()
 	if err := md.Convert([]byte(content), &buf, parser.WithContext(context)); err != nil {
-		panic(err)
+		return "", fmt.Errorf("render Markdown %q: %w", path, err)
 	}
-	templateParts := strings.Split(template, "{{slot}}")
-	joined := strings.Join([]string{PopulateMeta(context, templateParts[0]), buf.String(), PopulateMeta(context, templateParts[1])}, "")
-	eachPop := populateEach(joined, index, path)
-	fl := fixLinksAndImages(eachPop, path)
-	finalFile := OptimiseImages(fl)
+	templateBefore, templateAfter, found := strings.Cut(template, "{{slot}}")
+	if !found {
+		return "", fmt.Errorf("template for %q must contain {{slot}}", path)
+	}
+	if strings.Contains(templateAfter, "{{slot}}") {
+		return "", fmt.Errorf("template for %q must contain exactly one {{slot}}", path)
+	}
+	joined := strings.Join([]string{PopulateMeta(context, templateBefore), buf.String(), PopulateMeta(context, templateAfter)}, "")
+	eachPop, err := populateEach(joined, index, path)
+	if err != nil {
+		return "", err
+	}
+	finalFile, err := processHTML(eachPop, path, true, true)
+	if err != nil {
+		return "", fmt.Errorf("post-process HTML for %q: %w", path, err)
+	}
 
-	return finalFile
+	return finalFile, nil
 }
 
-// simple lazy loading -- in future, optimise it for different image sizes (we should use a deterministic model when optimising sizes earlier on so we know what sizes from simply checking the original)
+// OptimiseImages adds responsive image attributes without rewriting links.
 func OptimiseImages(documentText string) string {
-	isFirst := true
-	imgPattern := regexp.MustCompile(`<img\s+([^>]*)>`)
-	result := imgPattern.ReplaceAllStringFunc(documentText, func(match string) string {
-		if isFirst {
-
-			isFirst = false
-			return image.AdaptImgTag(match, true)
-		}
-		return image.AdaptImgTag(match, false)
-
-	})
+	result, err := processHTML(documentText, "", false, true)
+	if err != nil {
+		return documentText
+	}
 	return result
 }
 
 func PopulateMeta(ctx parser.Context, documentText string) string {
 	meta := meta.Get(ctx)
 
-	metaPattern := regexp.MustCompile(`{{meta\.([^}]+)}}`)
 	result := metaPattern.ReplaceAllStringFunc(documentText, func(match string) string {
 		key := metaPattern.FindStringSubmatch(match)[1]
 		value := meta[key]
@@ -77,11 +90,14 @@ func PopulateMeta(ctx parser.Context, documentText string) string {
 	return result
 }
 
-func populateEach(documentText string, index *index.ProjectIndex, path string) string { //at the moment only works for directories, but i would like other types of collections such as headings in the document
+func populateEach(documentText string, index *index.ProjectIndex, path string) (string, error) { //at the moment only works for directories, but i would like other types of collections such as headings in the document
 	//fmt.Println("populating each in the document")
 	//detect any area that starts with {{#each [...]}} and ends with {{/each}}
-	eachPattern := regexp.MustCompile(`(?s){{#each\s+([^}]+)}}(.*?){{/each}}`)
+	var renderErr error
 	content := eachPattern.ReplaceAllStringFunc(documentText, func(match string) string {
+		if renderErr != nil {
+			return match
+		}
 		//fmt.Println("processing each block:", match)
 		eachInner := eachPattern.FindStringSubmatch(match)
 		fieldName := eachInner[1]
@@ -95,51 +111,54 @@ func populateEach(documentText string, index *index.ProjectIndex, path string) s
 		folderToLook := filepath.Join(filepath.Dir(path), whereFrom)
 		//fmt.Println("folder to look:", folderToLook)
 
+		if index == nil {
+			renderErr = fmt.Errorf("render collection in %q: project index is unavailable", path)
+			return match
+		}
 		directoryIndex, exists := index.Directories[folderToLook]
 		if !exists {
-			fmt.Println("no directory index found for", folderToLook)
-			return ""
+			renderErr = fmt.Errorf("render collection in %q: directory %q is not indexed", path, folderToLook)
+			return match
 		}
 		//fmt.Println("found directory index for", folderToLook)
 
 		compiledHTML := ""
 
 		// Regex to find all {{item.PropertyName}} patterns in the block content
-		itemPattern := regexp.MustCompile(`{{item\.([^}]+)}}`)
-
 		for _, fileIndex := range directoryIndex.Files {
 			itemContent := itemPattern.ReplaceAllStringFunc(blockContent, func(itemMatch string) string {
+				if renderErr != nil {
+					return itemMatch
+				}
 				//fmt.Println("item match", itemMatch)
 				propertyName := itemPattern.FindStringSubmatch(itemMatch)[1]
 				if strings.HasPrefix(propertyName, "_preview") {
 					previewLengthStr := strings.TrimPrefix(propertyName, "_preview")
 					previewLength, err := strconv.Atoi(previewLengthStr)
-					if err != nil {
-						fmt.Println("Error parsing preview length:", err)
-						return ""
+					if err != nil || previewLength < 0 {
+						renderErr = fmt.Errorf("invalid preview length %q in %q", previewLengthStr, path)
+						return itemMatch
 					}
 					//there could be a better way than converting to html and then removing, but this does the job for now
 					originalFilePath := fileIndex.File.OriginalPath
 					fileContentBytes, err := os.ReadFile(originalFilePath)
 					if err != nil {
-						fmt.Println("Error reading file for preview:", err)
-						return ""
+						renderErr = fmt.Errorf("read preview source %q: %w", originalFilePath, err)
+						return itemMatch
 					}
 					fileContent := stripYamlProperties(string(fileContentBytes))
 					md := goldmark.New()
 					var buf bytes.Buffer
 					if err := md.Convert([]byte(fileContent), &buf); err != nil {
-						fmt.Println("Error converting markdown:", err)
-						return ""
+						renderErr = fmt.Errorf("render preview source %q: %w", originalFilePath, err)
+						return itemMatch
 					}
 
-					//get rid of html tags
-					htmlTagPattern := regexp.MustCompile(`<[^>]*>`)
-					plaintext := htmlTagPattern.ReplaceAllString(buf.String(), "")
-					plaintext = strings.TrimSpace(regexp.MustCompile(`\s+`).ReplaceAllString(plaintext, " "))
+					plaintext := extractText(buf.String())
 
-					if len(plaintext) > previewLength {
-						return plaintext[:previewLength] + "..."
+					previewRunes := []rune(plaintext)
+					if len(previewRunes) > previewLength {
+						return string(previewRunes[:previewLength]) + "..."
 					}
 					return plaintext
 				}
@@ -156,7 +175,7 @@ func populateEach(documentText string, index *index.ProjectIndex, path string) s
 		return compiledHTML
 	})
 
-	return content
+	return content, renderErr
 }
 
 func stripYamlProperties(content string) string {
@@ -179,78 +198,127 @@ func stripYamlProperties(content string) string {
 
 	return strings.Join(lines[endIndex+1:], "\n")
 }
-func fixLinksAndImages(htmlContent string, currentFilePath string) string {
-	hrefPattern := regexp.MustCompile(`href="([^"]*)"`)
-	srcPattern := regexp.MustCompile(`src="([^"]*)"`)
 
-	htmlContent = hrefPattern.ReplaceAllStringFunc(htmlContent, func(match string) string {
-		url := hrefPattern.FindStringSubmatch(match)[1]
-		if isRelativeFileLink(url) {
-			newUrl := resolveRelativeLink(url, currentFilePath)
-			return fmt.Sprintf(`href="%s"`, newUrl)
-		}
-		return match
-	})
-	htmlContent = srcPattern.ReplaceAllStringFunc(htmlContent, func(match string) string {
-		url := srcPattern.FindStringSubmatch(match)[1]
-		if isRelativeFileLink(url) {
-			newUrl := resolveRelativeLink(url, currentFilePath)
-			return fmt.Sprintf(`src="%s"`, newUrl)
-		}
-		return match
-	})
+func processHTML(documentText string, currentFilePath string, rewriteLinks bool, optimiseImages bool) (string, error) {
+	tokenizer := html.NewTokenizer(strings.NewReader(documentText))
+	var output strings.Builder
+	isFirstImage := true
 
-	return htmlContent
+	for {
+		tokenType := tokenizer.Next()
+		if tokenType == html.ErrorToken {
+			if errors.Is(tokenizer.Err(), io.EOF) {
+				return output.String(), nil
+			}
+			return "", tokenizer.Err()
+		}
+
+		if tokenType != html.StartTagToken && tokenType != html.SelfClosingTagToken {
+			output.Write(tokenizer.Raw())
+			continue
+		}
+
+		token := tokenizer.Token()
+		changed := false
+		if rewriteLinks {
+			for attributeIndex := range token.Attr {
+				attribute := &token.Attr[attributeIndex]
+				if attribute.Key != "href" && attribute.Key != "src" {
+					continue
+				}
+				if rewritten, ok := rewriteRelativeURL(attribute.Val, currentFilePath); ok {
+					attribute.Val = rewritten
+					changed = true
+				}
+			}
+		}
+
+		if optimiseImages && token.Data == "img" {
+			if optimiseImageToken(&token, isFirstImage) {
+				changed = true
+			}
+			isFirstImage = false
+		}
+
+		if changed {
+			output.WriteString(token.String())
+		} else {
+			output.Write(tokenizer.Raw())
+		}
+	}
 }
 
-func isRelativeFileLink(url string) bool {
-	if strings.HasPrefix(url, "http://") || strings.HasPrefix(url, "https://") || strings.HasPrefix(url, "//") {
+func optimiseImageToken(token *html.Token, isFirst bool) bool {
+	var source string
+	for _, attribute := range token.Attr {
+		if attribute.Key == "srcset" {
+			return false
+		}
+		if attribute.Key == "src" {
+			source = attribute.Val
+		}
+	}
+	if source == "" {
 		return false
 	}
-	if strings.HasPrefix(url, "/") {
+
+	srcset, ok := image.BuildSrcset(source)
+	if !ok {
 		return false
 	}
-	if strings.HasPrefix(url, "#") || strings.HasPrefix(url, "mailto:") || strings.HasPrefix(url, "tel:") {
-		return false
+	token.Attr = append(token.Attr, html.Attribute{Key: "srcset", Val: srcset})
+	if !isFirst {
+		if !hasAttribute(token.Attr, "loading") {
+			token.Attr = append(token.Attr, html.Attribute{Key: "loading", Val: "lazy"})
+		}
+		if !hasAttribute(token.Attr, "decoding") {
+			token.Attr = append(token.Attr, html.Attribute{Key: "decoding", Val: "async"})
+		}
 	}
 	return true
 }
 
-func resolveRelativeLink(relativeUrl string, currentFilePath string) string { //TODO: write this myself
-	//fmt.Println("resolving the link", relativeUrl, "coming from", currentFilePath)
-
-	//directory of current file
-	currentDir := filepath.Dir(currentFilePath)
-
-	// filepath.Join handles .. and . automatically
-	targetPath := filepath.Join(currentDir, relativeUrl)
-	targetPath = filepath.Clean(targetPath)
-	targetPath = filepath.ToSlash(targetPath)
-
-	routesPath, _ := strings.CutPrefix(targetPath, "build")
-
-	parts := strings.Split(routesPath, ".")
-	var fileType string
-	if len(parts) > 1 {
-		fileType = parts[len(parts)-1]
-	} else {
-		fileType = ""
+func hasAttribute(attributes []html.Attribute, name string) bool {
+	for _, attribute := range attributes {
+		if attribute.Key == name {
+			return true
+		}
 	}
-	targetFile := types.File{
-		OriginalPath: routesPath,
-		Type:         fileType,
+	return false
+}
+
+func rewriteRelativeURL(rawURL string, currentFilePath string) (string, bool) {
+	parsedURL, err := url.Parse(rawURL)
+	if err != nil || parsedURL.Scheme != "" || parsedURL.Host != "" || parsedURL.Path == "" || strings.HasPrefix(rawURL, "//") || strings.HasPrefix(parsedURL.Path, "/") {
+		return rawURL, false
 	}
+
+	targetPath := filepath.Join(filepath.Dir(currentFilePath), filepath.FromSlash(parsedURL.Path))
+	targetPath = filepath.ToSlash(filepath.Clean(targetPath))
+	fileType := strings.TrimPrefix(strings.ToLower(filepath.Ext(parsedURL.Path)), ".")
+	targetFile := types.File{OriginalPath: targetPath, Type: fileType}
 
 	finalPath := FindFinalPath(targetFile)
-	webPath, _ := strings.CutPrefix(finalPath, "build")
+	webPath := strings.TrimPrefix(finalPath, "build")
 	webPath = strings.TrimSuffix(webPath, "index.html")
-	if !strings.HasPrefix(webPath, "/") {
-		webPath = "/" + webPath
-	}
-	//fix double slashes if we have any
-	webPath = strings.ReplaceAll(webPath, "//", "/")
+	webPath = "/" + strings.TrimPrefix(webPath, "/")
 
-	return webPath
+	parsedURL.Path = webPath
+	parsedURL.RawPath = ""
+	return parsedURL.String(), true
+}
+
+func extractText(documentText string) string {
+	tokenizer := html.NewTokenizer(strings.NewReader(documentText))
+	var words []string
+	for {
+		switch tokenizer.Next() {
+		case html.ErrorToken:
+			return strings.Join(words, " ")
+		case html.TextToken:
+			words = append(words, strings.Fields(tokenizer.Token().Data)...)
+		}
+	}
 }
 
 func FindFinalPath(file types.File) string { //takes an original path, starting in 'routes' and resolves it to the location, ending in "build"
@@ -260,7 +328,7 @@ func FindFinalPath(file types.File) string { //takes an original path, starting 
 
 		return strings.Join([]string{"build", before, "index.html"}, "")
 	}
-	before, htmlFound := strings.CutSuffix(trimmed, "index.md")
+	before, htmlFound := strings.CutSuffix(trimmed, "index.html")
 	if htmlFound == true {
 		return strings.Join([]string{"build", before, "index.html"}, "")
 	}

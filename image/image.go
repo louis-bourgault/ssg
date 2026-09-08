@@ -7,7 +7,6 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 
@@ -20,11 +19,6 @@ import (
 	"github.com/kolesa-team/go-webp/webp"
 	"github.com/louis-bourgault/ssg/types"
 	"github.com/nfnt/resize"
-)
-
-var (
-	srcRegex    = regexp.MustCompile(`src="([^"]+)"`)
-	srcsetRegex = regexp.MustCompile(`\bsrcset="[^"]*"`)
 )
 
 func IsSupportedRasterPath(filePath string) bool {
@@ -129,24 +123,13 @@ func GenerateImages(originalPath string, finalPath string) error {
 	return nil
 }
 
-func AdaptImgTag(originalElement string, isFirst bool) string {
+func BuildSrcset(source string) (string, bool) {
 	//TODO: This function is really slow for what it does, which is a risk for things like the Cloudflare 20 minute site build. A single run for a large image often takes multiple seconds.
 	// It may be better to go through the directory and pattern match the name (since they're already generated) instead of deterministically figuring out what resolutions it would be from scratch
 
-	//in another file, we'll have a regex that finds all image tags and adapts them to use srcset
-	// we want to take the original tag, which includes a reference to the original src, locate the file and figure out its dimensions (we are guaranteed that the images are already generated) and splice in the srcset.
-	//<img src="path/to/image.jpg" alt="description"> might be our input here
-	matches := srcRegex.FindStringSubmatch(originalElement)
-	if len(matches) < 2 {
-		return originalElement
-	}
-	if srcsetRegex.MatchString(originalElement) {
-		return originalElement
-	}
-
-	srcURL, err := url.Parse(matches[1])
-	if err != nil || srcURL.Scheme != "" || srcURL.Host != "" || strings.HasPrefix(matches[1], "//") || !IsSupportedRasterPath(srcURL.Path) {
-		return originalElement
+	srcURL, err := url.Parse(source)
+	if err != nil || srcURL.Scheme != "" || srcURL.Host != "" || strings.HasPrefix(source, "//") || !IsSupportedRasterPath(srcURL.Path) {
+		return "", false
 	}
 
 	srcPath := path.Clean("/" + srcURL.Path)
@@ -154,13 +137,13 @@ func AdaptImgTag(originalElement string, isFirst bool) string {
 
 	file, err := os.Open(diskPath)
 	if err != nil {
-		return originalElement
+		return "", false
 	}
 	defer file.Close()
 
 	img, _, err := image.Decode(file)
 	if err != nil {
-		return originalElement
+		return "", false
 	}
 
 	bounds := img.Bounds()
@@ -181,21 +164,5 @@ func AdaptImgTag(originalElement string, isFirst bool) string {
 		srcsetParts = append(srcsetParts, locationToUse+" "+strconv.Itoa(size.W)+"w")
 	}
 
-	srcset := ""
-	for i, part := range srcsetParts {
-		srcset += part
-		if i < len(srcsetParts)-1 {
-			srcset += ", "
-		}
-	}
-
-	trimmed := strings.TrimRight(originalElement, "/>")
-	trimmed = strings.TrimSpace(trimmed)
-	var additionalTags string
-	if !isFirst {
-		additionalTags = " loading=\"lazy\" decoding=\"async\""
-	}
-	trimmed += additionalTags
-	modifiedElement := trimmed + " srcset=\"" + srcset + "\" />"
-	return modifiedElement
+	return strings.Join(srcsetParts, ", "), len(srcsetParts) > 0
 }
