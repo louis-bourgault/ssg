@@ -52,3 +52,15 @@ You will need libwebp installed: ```sudo apt-get install libwebp-dev```
 Use degit, by Rich Harris, or copy the template directory of this repository.
 [https://github.com/Rich-Harris/degit](https://github.com/Rich-Harris/degit)
 ```degit louis-bourgault/ssg/template```
+
+## Development server
+
+Run the development server from the project root:
+
+```sh
+go run . dev [--host HOST] [--port PORT] [--output DIRECTORY]
+```
+
+The defaults are `--host 127.0.0.1`, `--port 8080`, and `--output .ssg-dev`. Use port `0` to select an available ephemeral port. Binding to a LAN or public interface, such as `--host 0.0.0.0`, must be requested explicitly.
+
+Development uses the same complete build pipeline as production, but writes into `.ssg-dev` instead of `build`. One recursive watcher monitors the entire `routes` tree, combines rapid changes into a single rebuild, and detects changed, created, renamed, and deleted pages, templates, collection entries, styles, and assets. Successful non-CSS builds reload every connected browser; CSS-only builds refresh matching stylesheets without reloading the page. Build failures leave the last successful output intact and appear in a dismissible browser overlay. Fixing the source clears the error and reloads automatically. The server also reconnects dropped browser connections and shuts down cleanly on Ctrl+C.
