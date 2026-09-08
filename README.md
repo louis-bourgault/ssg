@@ -1,54 +1,121 @@
 # SSG
 
-A simple SSG for markdown files.
+SSG builds a site from ordinary HTML templates and Markdown files. Its template language intentionally has only one content slot, metadata values, directory loops, optional sorting, and generated headings.
 
-## Why?
-There are plenty of SSGs out there -- the one I tried first was Hugo. One thing that I didn't like about it was that the templates and the themes were too far abstracted, and I ended up having to look up docs for all the themes I attempted to use, and where they wanted me to put my files. I want to just make a simple website, not deal with this.
-At this point, I could have found another SSG that aligned with what I wanted. Or, you know, I could not bother and make my own from scratch (well, not really -- it is just a 200 line wrapper around Goldmark, which does all the actual work.)
+Put source files in `routes/` and run:
 
-## Syntax:
+```sh
+go run .
+```
 
-- ```{{slot}}```: the place where we will insert the generated markdown content
-- ```{{meta.*}}```: use this to insert page metadata, which is placed at the top of the markdown file in standard yaml format. Note that only simple properties are compatible for now, with no arrays or objects. If one is passed, you are at the mercy of ```fmt.Sprintf``` as to how it makes formats it.
+Markdown pages get pretty output paths: `routes/about.md` becomes `build/about/index.html`, `routes/posts/index.md` becomes `build/posts/index.html`, and `routes/index.md` becomes `build/index.html`. Other files are copied to the corresponding location under `build/`.
 
+## Templates
 
-I aim to add further syntax. One I am looking at implementing is an each system, that can be used to show different things within a directory. It would follow a syntax like:
-```{#each . as item sort date desc}```. Also, to allow table of contents systems, I could also do ```meta.headings``` which would work with each blocks.
+A `template.html` is ordinary HTML with exactly one Markdown slot:
 
-## Files and how it works
+```html
+<!doctype html>
+<html>
+    <body>{{slot}}</body>
+</html>
+```
 
-Chuck everything in a routes directory. This is what will be built
+The template applies to Markdown files in its directory and all descendant directories. A nearer `template.html` overrides an inherited one. Template files are never copied to the output. If there is no template, SSG uses a minimal default template.
 
-/routes/{name}.md ==> /build/name/index.html (using the template.html to put it in)
-/routes/about/index.md ==> /build/about/index.html (using compilation)
-/routes/about/index.html is just copied across
-/routes/about.html ==> /routes/about/index.html
-Any file that is not ending in md or html is just copied. I do intend to do image processing in the future, so it will get different resolutions of the images to put into ```srcset``` tags in HTML -- but not yet.
+Template directives are interpreted only in `template.html`, never inside Markdown. This makes text such as `{{meta.example}}` safe to use literally in a Markdown document.
 
-## Link Handling
-Generated HTML files are postprocessed so any normal markdown link -- in the format of ```[Link_Name](./path/to/link)``` is fixed so that it will link properly. This also handles src tags for images, and any href tag, whether it be for a CSS file or a link.
+## Metadata
 
-## Templating
+Frontmatter properties are available through `meta`:
 
-This system works around templates -- you can chuck a ```template.html``` file in a directory, and any files in that directory, as well as child directories that do not have their own template.html file, will be compiled using that. It really is pretty simple.
+```md
+---
+Title: About us
+description: What we make
+---
+```
 
-## What I use it for
+```html
+<title>{{meta.Title}}</title>
+<meta name="description" content="{{meta.description}}">
+{{slot}}
+```
 
-Mainly simple wikis and static sites. I want a site for a project -- I can just write some basic html once, then markdown and copy in pico css or simple.css, and I have a site.
+Strings, numbers, and booleans can be rendered. Arrays and objects may exist in frontmatter but cannot be interpolated directly. A missing property is a build error, which catches spelling mistakes instead of silently producing an empty value.
 
-## Possible Later Things:
+## Directory collections
 
-Possible things to add are:
-- image optimising and lazy loading (will be really easy, just need to modify img tags)
-- dev server
-- preload on hover (optional postprocessing system)
-- {each} tags as above
+Use one `each` block to list the Markdown pages in a directory:
 
-## Environment
-For webp, we use a library that does conversions through C bindings. Thus, you should use a machine with cgo working to compile and run this. If you're on windows, you could go through the hassle of installing MYS32, but do yourself a favour and just use WSL instead (or delete windows entirely, preferably)
-You will need libwebp installed: ```sudo apt-get install libwebp-dev```
+```html
+{{#each . as item}}
+    <a href="{{item._url}}">{{item.Title}}</a>
+{{/each}}
+```
 
-# Initialising
-Use degit, by Rich Harris, or copy the template directory of this repository.
-[https://github.com/Rich-Harris/degit](https://github.com/Rich-Harris/degit)
-```degit louis-bourgault/ssg/template```
+`.` means the current Markdown page's directory. Relative paths select another directory: `./posts` is a child and `../posts` is parent-relative. Paths cannot escape `routes/`, and globs are not supported.
+
+The name after `as` is the alias for that block, so descriptive aliases are encouraged:
+
+```html
+{{#each ./posts as post}}
+    <a href="{{post._url}}">{{post.title}}</a>
+{{/each}}
+```
+
+Without an explicit sort, pages are ordered by slash-normalized source path. Sort on a frontmatter or built-in property with `sort`; direction defaults to `asc`:
+
+```html
+{{#each ./posts as post sort date desc}}
+    <article>
+        <a href="{{post._url}}">{{post.title}}</a>
+        <time>{{post.date}}</time>
+    </article>
+{{/each}}
+```
+
+String values sort lexicographically and numbers sort numerically. Missing sort values and incompatible mixed types are build errors. Equal values use source path as a deterministic tie-breaker.
+
+Each page exposes its frontmatter directly through the alias plus these built-ins:
+
+- `{{item._url}}` — final pretty URL, such as `/posts/hello/`
+- `{{item._filename}}` — source filename, such as `hello.md`
+- `{{item._path}}` — slash-separated path relative to `routes/`, such as `posts/hello.md`
+- `{{item._preview100}}` — cached plain-text preview, truncated to 100 Unicode characters
+
+Preview lengths are non-negative integers. `...` is appended only if text was actually truncated. Frontmatter names beginning with `_` are reserved by SSG.
+
+Blocks can be nested, and aliases follow their block scope. The language has no conditions, expressions, filters, pagination, includes, functions, or scripting.
+
+## Generated headings
+
+SSG collects level 1–6 headings while Goldmark renders the current Markdown document. Templates decide whether and how to display them:
+
+```html
+<nav aria-label="On this page">
+    {{#each meta.headings as heading}}
+        <a href="#{{heading.id}}">
+            {{heading.text}}
+        </a>
+    {{/each}}
+</nav>
+```
+
+Heading values are `heading.level`, `heading.text`, and `heading.id`. IDs exactly match Goldmark's emitted IDs, text contains no HTML tags, and headings remain in document order. `meta.headings` is computed and cannot be declared in frontmatter.
+
+## Escaping and errors
+
+Metadata, collection properties, headings, URLs, filenames, paths, and previews are HTML-escaped. `{{slot}}` is the only trusted HTML value because it contains HTML produced by Goldmark. There is no raw interpolation form.
+
+Template syntax and rendering errors include the template path, line, and column. Every custom template must have exactly one top-level `{{slot}}`; slots inside loops, unknown directives, malformed loop headers, and unclosed blocks are rejected.
+
+## Links and images
+
+After rendering, relative `href` and `src` values are rewritten to their production paths. Supported raster images can receive generated responsive variants and `srcset` attributes. SVG files are left unchanged.
+
+Image conversion uses libwebp through CGO. On Debian or Ubuntu, install it with:
+
+```sh
+sudo apt-get install libwebp-dev
+```
