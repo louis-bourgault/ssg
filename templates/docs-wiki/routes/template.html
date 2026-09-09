@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <meta name="color-scheme" content="light dark" />
+        <meta name="description" content="{{meta.description}}" />
+        <title>{{meta.title}} · Plaintext Manual</title>
+        <link rel="stylesheet" href="./styles.css" />
+    </head>
+    <body>
+        <a class="skip-link" href="#content">Skip to content</a>
+
+        <aside class="sidebar">
+            <header class="product">
+                <a href="./index.md" aria-label="Plaintext Manual home">
+                    <span class="product-mark" aria-hidden="true">P/</span>
+                    <span>
+                        <strong>Plaintext</strong>
+                        <small>Manual</small>
+                    </span>
+                </a>
+            </header>
+
+            <nav class="page-nav" aria-label="Documentation pages">
+                <p>Guide</p>
+                {{#each . as page sort order asc}}
+                    <a href="{{page._url}}">
+                        <span>{{page.order}}</span>
+                        {{page.navTitle}}
+                    </a>
+                {{/each}}
+            </nav>
+
+            <footer class="sidebar-footer">
+                <span>Example docs</span>
+                <span>v1.0</span>
+            </footer>
+        </aside>
+
+        <main id="content">
+            <header class="page-header">
+                <p>{{meta.section}}</p>
+                <h1>{{meta.title}}</h1>
+                <div>{{meta.description}}</div>
+            </header>
+
+            <div class="page-layout">
+                <article class="docs-content">{{slot}}</article>
+
+                <aside class="table-of-contents" aria-labelledby="contents-title">
+                    <h2 id="contents-title">On this page</h2>
+                    <nav aria-label="Table of contents">
+                        {{#each meta.headings as heading}}
+                            <a data-level="{{heading.level}}" href="#{{heading.id}}">{{heading.text}}</a>
+                        {{/each}}
+                    </nav>
+                </aside>
+            </div>
+
+            <footer class="page-footer">
+                <p>Plain text in, static pages out.</p>
+                <a href="https://github.com/louis-bourgault/ssg">View SSG on GitHub</a>
+            </footer>
+        </main>
+    </body>
+</html>

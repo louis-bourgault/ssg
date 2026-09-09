@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <meta name="color-scheme" content="light" />
+        <meta name="description" content="{{meta.description}}" />
+        <title>{{meta.title}} — News Template</title>
+        <link rel="stylesheet" href="./styles.css" />
+    </head>
+    <body class="front-page">
+        <a class="skip-link" href="#content">Skip to stories</a>
+
+        <header class="site-header">
+            <div class="utility-bar">
+                <span>Example site</span>
+                <a href="#latest">Browse articles</a>
+            </div>
+            <a class="masthead" href="./index.md">News Template</a>
+            <p class="motto">Articles, updates &amp; notes</p>
+            <nav class="sections" aria-label="Sections">
+                <a href="#latest">Latest</a>
+                <a href="./stories/example-article-one.md">Section one</a>
+                <a href="./stories/example-article-two.md">Section two</a>
+                <a href="./stories/example-article-three.md">Section three</a>
+            </nav>
+        </header>
+
+        <main id="content">
+            <section class="page-intro" aria-labelledby="intro-title">
+                <p class="eyebrow">{{meta.eyebrow}}</p>
+                <h1 id="intro-title">{{meta.title}}</h1>
+                <div class="standfirst">{{slot}}</div>
+            </section>
+
+            <section class="latest" id="latest" aria-labelledby="latest-title">
+                <header class="section-heading">
+                    <h2 id="latest-title">Latest stories</h2>
+                    <span>Example collection</span>
+                </header>
+                <div class="story-grid">
+                    {{#each ./stories as story sort date desc}}
+                        <article class="story-card">
+                            <p class="story-section">{{story.section}}</p>
+                            <h3><a href="{{story._url}}">{{story.title}}</a></h3>
+                            <p class="story-dek">{{story.dek}}</p>
+                            <footer>
+                                <span>By {{story.author}}</span>
+                                <time datetime="{{story.date}}">{{story.displayDate}}</time>
+                            </footer>
+                        </article>
+                    {{/each}}
+                </div>
+            </section>
+        </main>
+
+        <footer class="site-footer">
+            <p>News Template</p>
+            <p>A small example publication made with SSG.</p>
+        </footer>
+    </body>
+</html>
